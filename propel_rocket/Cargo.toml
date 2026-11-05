@@ -1,0 +1,18 @@
+[package]
+name = "propel_rocket"
+version = "0.1.0"
+description = """
+Rocket integration for Propel: the view responder and dev-mode fairing.
+"""
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.75"
+publish = false
+
+[dependencies]
+rocket = { git = "https://github.com/rwf2/Rocket", rev = "3a54d079" }
+propel_parser = { path = "../propel_parser" }
+propel_macros = { path = "../propel_macros" }
+
+[lints]
+workspace = true

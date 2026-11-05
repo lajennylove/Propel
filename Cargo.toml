@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = [
+  "propel_parser/",
+  "propel_compiler/",
+  "propel_macros/",
+  "propel_rocket/",
+]
+
+[workspace.lints.rust]
+rust_2018_idioms = "warn"
