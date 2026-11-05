@@ -9,5 +9,9 @@ edition = "2021"
 rust-version = "1.75"
 publish = false
 
+[dependencies]
+pest = "2.9"
+pest_derive = "2.9"
+
 [lints]
 workspace = true

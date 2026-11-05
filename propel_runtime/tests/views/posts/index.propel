@@ -1,0 +1,20 @@
+@extends('layouts.app')
+
+@section('title')
+  {{ $title }}
+@endsection
+
+@section('content')
+  <h1>{{ $title }}</h1>
+
+  @forelse (post in posts)
+    <article>
+      <h2>{{ post.title }}</h2>
+      @if (post.published_at)
+        <time>{{ post.published_at }}</time>
+      @endif
+    </article>
+  @empty
+    <p>No posts yet.</p>
+  @endforelse
+@endsection

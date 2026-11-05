@@ -11,8 +11,8 @@ publish = false
 
 [dependencies]
 rocket = { git = "https://github.com/rwf2/Rocket", rev = "3a54d079" }
-propel_parser = { path = "../propel_parser" }
-propel_macros = { path = "../propel_macros" }
+propel_runtime = { path = "../propel_runtime" }
+serde = "1"
 
 [lints]
 workspace = true

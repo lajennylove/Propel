@@ -1,0 +1,45 @@
+// Propel template grammar. Draft syntax from the Propel plan; the open
+// decisions in PROPEL-README.md may still change it.
+//
+// There is no implicit WHITESPACE rule: template text is significant, so
+// whitespace is skipped only where a rule says so (`ws`).
+
+file = { SOI ~ node* ~ EOI }
+
+node = _{ comment | echo | if_block | foreach_block | forelse_block | extends | section | yield_ | text }
+
+comment = _{ "{{--" ~ (!"--}}" ~ ANY)* ~ "--}}" }
+
+// Text runs up to the next echo or directive. A lone "@" that is not followed
+// by a letter is plain text, so e-mail addresses are not a problem.
+text = @{ (!("{{" | "{!!" | directive_start) ~ ANY)+ }
+directive_start = _{ "@" ~ ASCII_ALPHA }
+
+echo = { raw_echo | escaped_echo }
+escaped_echo = { "{{" ~ ws ~ expr ~ ws ~ "}}" }
+raw_echo = { "{!!" ~ ws ~ expr ~ ws ~ "!!}" }
+
+// A path such as `$title` or `post.title`. The leading `$` is optional.
+expr = @{ "$"? ~ name ~ ("." ~ name)* }
+name = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+string = @{ ("'" ~ (!"'" ~ ANY)* ~ "'") | ("\"" ~ (!"\"" ~ ANY)* ~ "\"") }
+
+ws = _{ (" " | "\t" | "\r" | "\n")* }
+kw_end = _{ !(ASCII_ALPHANUMERIC | "_") }
+
+body = { node* }
+
+condition = _{ ws ~ "(" ~ ws ~ expr ~ ws ~ ")" }
+if_block = { "@if" ~ condition ~ body ~ elseif_branch* ~ else_branch? ~ "@endif" ~ kw_end }
+elseif_branch = { "@elseif" ~ condition ~ body }
+else_branch = { "@else" ~ kw_end ~ body }
+
+loop_head = { ws ~ "(" ~ ws ~ name ~ ws ~ "in" ~ kw_end ~ ws ~ expr ~ ws ~ ")" }
+foreach_block = { "@foreach" ~ loop_head ~ body ~ "@endforeach" ~ kw_end }
+forelse_block = { "@forelse" ~ loop_head ~ body ~ empty_branch? ~ "@endforelse" ~ kw_end }
+empty_branch = { "@empty" ~ kw_end ~ body }
+
+extends = { "@extends" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" }
+section = { "@section" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" ~ body ~ "@endsection" ~ kw_end }
+yield_ = { "@yield" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" }

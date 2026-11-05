@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "propel_parser/",
   "propel_compiler/",
+  "propel_runtime/",
   "propel_macros/",
   "propel_rocket/",
 ]

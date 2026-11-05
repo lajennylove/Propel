@@ -1,0 +1,2 @@
+# Own rustfmt config: the Rocket root config disables formatting for everything below it.
+edition = "2021"
