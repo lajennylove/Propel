@@ -6,14 +6,27 @@
 
 file = { SOI ~ node* ~ EOI }
 
-node = _{ comment | echo | if_block | foreach_block | forelse_block | extends | section | yield_ | text }
+node = _{ comment | echo | if_block | foreach_block | forelse_block | extends | section | yield_ | dump | dd | at_escape | brace_escape | text }
 
 comment = _{ "{{--" ~ (!"--}}" ~ ANY)* ~ "--}}" }
 
-// Text runs up to the next echo or directive. A lone "@" that is not followed
-// by a letter is plain text, so e-mail addresses are not a problem.
-text = @{ (!("{{" | "{!!" | directive_start) ~ ANY)+ }
-directive_start = _{ "@" ~ ASCII_ALPHA }
+// `@@` produces a literal "@", so a directive-like string can be written out.
+at_escape = { "@@" }
+// `@{{` produces a literal "{{", for JavaScript or CSS that uses braces.
+brace_escape = { "@{{" }
+
+// Text runs up to the next echo, escape, or known directive. Anything else
+// that starts with "@" is plain text, so `me@example.com` and `@media` work.
+text = @{ (!("{{" | "{!!" | "@@" | "@{{" | directive_start) ~ ANY)+ }
+directive_start = _{ "@" ~ keyword ~ kw_end }
+// Longer names come first: a shorter name that is a prefix of a longer one
+// would otherwise match and then fail the `kw_end` check.
+keyword = _{
+    "elseif" | "else" | "endif" | "if"
+  | "endforeach" | "foreach" | "endforelse" | "forelse" | "empty"
+  | "endsection" | "section" | "extends" | "yield"
+  | "dump" | "dd"
+}
 
 echo = { raw_echo | escaped_echo }
 escaped_echo = { "{{" ~ ws ~ expr ~ ws ~ "}}" }
@@ -43,3 +56,8 @@ empty_branch = { "@empty" ~ kw_end ~ body }
 extends = { "@extends" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" }
 section = { "@section" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" ~ body ~ "@endsection" ~ kw_end }
 yield_ = { "@yield" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" }
+
+// Debug helpers. `@dump` prints a value and carries on. `@dd` prints it and stops.
+// The runtime renders them only in debug builds.
+dump = { "@dump" ~ ws ~ "(" ~ ws ~ expr ~ ws ~ ")" }
+dd = { "@dd" ~ ws ~ "(" ~ ws ~ expr ~ ws ~ ")" }

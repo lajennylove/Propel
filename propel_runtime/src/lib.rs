@@ -13,6 +13,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::io;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::SystemTime;
 
 use propel_parser::{Branch, Expr, Node, ParseError, Template};
 use serde::Serialize;
@@ -26,10 +28,53 @@ const MAX_LAYOUT_DEPTH: usize = 32;
 pub trait Loader {
     /// Returns the source for a template name such as `posts.index`.
     fn source(&self, name: &str) -> io::Result<String>;
+
+    /// Returns the parsed template. The default parses the source on every
+    /// call. `FileLoader` overrides this with a cache.
+    fn template(&self, name: &str) -> Result<Arc<Template>, RenderError> {
+        let source = self.source(name).map_err(|source| RenderError::Load {
+            name: name.to_owned(),
+            source,
+        })?;
+        parse_named(name, &source)
+    }
+}
+
+fn parse_named(name: &str, source: &str) -> Result<Arc<Template>, RenderError> {
+    propel_parser::parse(source)
+        .map(Arc::new)
+        .map_err(|error| RenderError::Parse {
+            name: name.to_owned(),
+            error: Box::new(error),
+        })
+}
+
+/// A parsed template, and the modification time and size of the file it came
+/// from. Both are checked: some file systems store times to the second, and a
+/// second save inside that second can still change the size.
+#[derive(Clone)]
+struct CachedTemplate {
+    modified: SystemTime,
+    len: u64,
+    template: Arc<Template>,
+}
+
+/// Parsed templates by file path, shared by every `FileLoader`.
+///
+/// An entry is reused while the file's modification time is unchanged, so an
+/// edit is picked up on the next render. The cost is one `stat` per render,
+/// where it used to be a read and a parse.
+fn cache() -> &'static Mutex<HashMap<PathBuf, CachedTemplate>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedTemplate>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Reads `<root>/<name>.propel`, with dots in the name as directory
 /// separators. `posts.index` reads `<root>/posts/index.propel`.
+///
+/// Names may only contain ASCII letters, digits and `_`, separated by dots.
+/// Anything else (a leading `/`, `..`, a backslash) is rejected before the
+/// file system is touched, so a name can never point outside `root`.
 #[derive(Debug, Clone)]
 pub struct FileLoader {
     root: PathBuf,
@@ -39,15 +84,64 @@ impl FileLoader {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
     }
+
+    fn path(&self, name: &str) -> io::Result<PathBuf> {
+        let valid = name.split('.').all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        });
+
+        if !valid {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("invalid template name `{name}`"),
+            ));
+        }
+
+        let mut path = self.root.clone();
+        for segment in name.split('.') {
+            path.push(segment);
+        }
+        Ok(path.with_extension("propel"))
+    }
 }
 
 impl Loader for FileLoader {
     fn source(&self, name: &str) -> io::Result<String> {
-        let path = self
-            .root
-            .join(name.replace('.', "/"))
-            .with_extension("propel");
-        std::fs::read_to_string(path)
+        std::fs::read_to_string(self.path(name)?)
+    }
+
+    fn template(&self, name: &str) -> Result<Arc<Template>, RenderError> {
+        let load = |source| RenderError::Load {
+            name: name.to_owned(),
+            source,
+        };
+
+        let path = self.path(name).map_err(load)?;
+        let meta = std::fs::metadata(&path).map_err(load)?;
+        let (modified, len) = (meta.modified().map_err(load)?, meta.len());
+
+        // A poisoned lock still holds valid entries, so keep using it.
+        let mut cache = cache().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(cached) = cache.get(&path) {
+            if cached.modified == modified && cached.len == len {
+                return Ok(Arc::clone(&cached.template));
+            }
+        }
+
+        let source = std::fs::read_to_string(&path).map_err(load)?;
+        let template = parse_named(name, &source)?;
+        cache.insert(
+            path,
+            CachedTemplate {
+                modified,
+                len,
+                template: Arc::clone(&template),
+            },
+        );
+        Ok(template)
     }
 }
 
@@ -69,6 +163,8 @@ pub enum RenderError {
     NotPrintable { template: String, path: String },
     /// The `@extends` chain is deeper than `MAX_LAYOUT_DEPTH`.
     LayoutTooDeep { template: String },
+    /// A `@section` is inside an `@if`, a loop, or another section.
+    NestedSection { template: String, section: String },
     /// The context could not be converted to a value.
     Context(serde_json::Error),
 }
@@ -90,6 +186,12 @@ impl fmt::Display for RenderError {
             }
             RenderError::NotPrintable { template, path } => {
                 write!(f, "`{path}` in `{template}` is a list or object, not text")
+            }
+            RenderError::NestedSection { template, section } => {
+                write!(
+                    f,
+                    "@section('{section}') in `{template}` must be at the top level of the template"
+                )
             }
             RenderError::LayoutTooDeep { template } => {
                 write!(f, "@extends chain at `{template}` is too deep (a cycle?)")
@@ -115,6 +217,7 @@ where
         context,
         scopes: Vec::new(),
         template: String::new(),
+        halted: false,
     };
 
     let mut out = String::new();
@@ -122,8 +225,16 @@ where
     Ok(out)
 }
 
+/// A `@section` body. It remembers its template, so an error inside it is
+/// reported against the template that wrote it, not against the layout.
+#[derive(Clone)]
+struct Section {
+    template: String,
+    nodes: Vec<Node>,
+}
+
 /// `@section` bodies by name.
-type Sections = HashMap<String, Vec<Node>>;
+type Sections = HashMap<String, Section>;
 
 struct Renderer<'a, L> {
     loader: &'a L,
@@ -132,6 +243,8 @@ struct Renderer<'a, L> {
     scopes: Vec<(String, Value)>,
     /// The template being rendered, for error messages.
     template: String,
+    /// Set by `@dd`. Rendering stops at the next node.
+    halted: bool,
 }
 
 impl<L: Loader> Renderer<'_, L> {
@@ -154,7 +267,7 @@ impl<L: Loader> Renderer<'_, L> {
         self.template = name.to_owned();
         let template = self.parse(name)?;
 
-        let mut sections = collect_sections(&template);
+        let mut sections = collect_sections(name, &template)?;
         sections.extend(overrides);
 
         let parent = template.nodes.iter().find_map(|node| match node {
@@ -168,19 +281,8 @@ impl<L: Loader> Renderer<'_, L> {
         }
     }
 
-    fn parse(&self, name: &str) -> Result<Template, RenderError> {
-        let source = self
-            .loader
-            .source(name)
-            .map_err(|source| RenderError::Load {
-                name: name.to_owned(),
-                source,
-            })?;
-
-        propel_parser::parse(&source).map_err(|error| RenderError::Parse {
-            name: name.to_owned(),
-            error: Box::new(error),
-        })
+    fn parse(&self, name: &str) -> Result<Arc<Template>, RenderError> {
+        self.loader.template(name)
     }
 
     fn nodes(
@@ -190,12 +292,23 @@ impl<L: Loader> Renderer<'_, L> {
         out: &mut String,
     ) -> Result<(), RenderError> {
         for node in nodes {
+            if self.halted {
+                break;
+            }
             match node {
                 Node::Text(text) => out.push_str(text),
-                Node::Echo { expr, raw } => {
+                Node::Echo {
+                    expr,
+                    raw,
+                    url_attribute,
+                } => {
                     let value = self.lookup(expr)?;
                     let text = self.printable(expr, &value)?;
-                    if *raw {
+                    if *url_attribute && !is_safe_url(&text) {
+                        // A link to a script or other unsafe scheme is replaced
+                        // with a harmless placeholder, even when the echo is raw.
+                        out.push('#');
+                    } else if *raw {
                         out.push_str(&text);
                     } else {
                         escape_into(&text, out);
@@ -223,8 +336,10 @@ impl<L: Loader> Renderer<'_, L> {
                     body,
                     empty,
                 } => {
+                    // A null collection (a `None` list) is empty.
                     let items = match self.lookup(collection)? {
                         Value::Array(items) => items,
+                        Value::Null => Vec::new(),
                         _ => {
                             return Err(RenderError::NotIterable {
                                 template: self.template.clone(),
@@ -240,6 +355,9 @@ impl<L: Loader> Renderer<'_, L> {
                     }
 
                     for value in items {
+                        if self.halted {
+                            break;
+                        }
                         self.scopes.push((item.clone(), value));
                         let result = self.nodes(body, sections, out);
                         self.scopes.pop();
@@ -248,12 +366,24 @@ impl<L: Loader> Renderer<'_, L> {
                 }
                 // Layouts are resolved in `page`, so an @extends that is not
                 // at the top of a template has nothing to do here.
+                Node::Dump { expr, halt } => {
+                    // Debug helpers are for development. Release output never
+                    // includes them.
+                    if cfg!(debug_assertions) {
+                        let value = self.lookup(expr)?;
+                        out.push_str(&dump_html(expr, &value));
+                        self.halted |= *halt;
+                    }
+                }
                 Node::Extends(_) => {}
                 // A section outside a layout renders in place.
                 Node::Section { body, .. } => self.nodes(body, sections, out)?,
                 Node::Yield(name) => {
-                    if let Some(body) = sections.get(name) {
-                        self.nodes(body, sections, out)?;
+                    if let Some(section) = sections.get(name) {
+                        let outer = std::mem::replace(&mut self.template, section.template.clone());
+                        let result = self.nodes(&section.nodes, sections, out);
+                        self.template = outer;
+                        result?;
                     }
                 }
             }
@@ -269,23 +399,31 @@ impl<L: Loader> Renderer<'_, L> {
             .split_first()
             .expect("the parser never produces an empty path");
 
-        let root = self
+        let undefined = || RenderError::Undefined {
+            template: self.template.clone(),
+            path: expr.path.join("."),
+        };
+
+        let mut value = self
             .scopes
             .iter()
             .rev()
             .find(|(name, _)| name == first)
             .map(|(_, value)| value)
-            .or_else(|| self.context.get(first));
+            .or_else(|| self.context.get(first))
+            .ok_or_else(undefined)?;
 
-        root.and_then(|root| {
-            rest.iter()
-                .try_fold(root, |value, segment| value.get(segment))
-        })
-        .cloned()
-        .ok_or_else(|| RenderError::Undefined {
-            template: self.template.clone(),
-            path: expr.path.join("."),
-        })
+        for segment in rest {
+            // A null parent makes the whole path null, so an optional
+            // relation that is not set renders as empty. A key that is
+            // missing from an object is still an error.
+            if value.is_null() {
+                return Ok(Value::Null);
+            }
+            value = value.get(segment).ok_or_else(undefined)?;
+        }
+
+        Ok(value.clone())
     }
 
     /// The text for an echoed value. `null` (a `None` in Rust) echoes as
@@ -304,16 +442,63 @@ impl<L: Loader> Renderer<'_, L> {
     }
 }
 
-/// The top-level `@section`s of a template.
-fn collect_sections(template: &Template) -> Sections {
-    template
-        .nodes
-        .iter()
-        .filter_map(|node| match node {
-            Node::Section { name, body } => Some((name.clone(), body.clone())),
-            _ => None,
-        })
-        .collect()
+/// The top-level `@section`s of a template. A section anywhere else (inside
+/// an `@if`, a loop, or another section) is an error. It would otherwise be
+/// silently dropped, or rendered in an unexpected place.
+fn collect_sections(name: &str, template: &Template) -> Result<Sections, RenderError> {
+    let mut sections = Sections::new();
+
+    for node in &template.nodes {
+        match node {
+            Node::Section {
+                name: section,
+                body,
+            } => {
+                if let Some(inner) = find_section(body) {
+                    return Err(nested_section(name, inner));
+                }
+                sections.insert(
+                    section.clone(),
+                    Section {
+                        template: name.to_owned(),
+                        nodes: body.clone(),
+                    },
+                );
+            }
+            other => {
+                if let Some(inner) = find_section(std::slice::from_ref(other)) {
+                    return Err(nested_section(name, inner));
+                }
+            }
+        }
+    }
+
+    Ok(sections)
+}
+
+/// The name of the first `@section` found anywhere inside `nodes`.
+fn find_section(nodes: &[Node]) -> Option<&str> {
+    nodes.iter().find_map(|node| match node {
+        Node::Section { name, .. } => Some(name.as_str()),
+        Node::If {
+            branches,
+            otherwise,
+        } => branches
+            .iter()
+            .find_map(|branch| find_section(&branch.body))
+            .or_else(|| otherwise.as_deref().and_then(find_section)),
+        Node::Loop { body, empty, .. } => {
+            find_section(body).or_else(|| empty.as_deref().and_then(find_section))
+        }
+        _ => None,
+    })
+}
+
+fn nested_section(template: &str, section: &str) -> RenderError {
+    RenderError::NestedSection {
+        template: template.to_owned(),
+        section: section.to_owned(),
+    }
 }
 
 /// Truthiness for `@if`. `null`, `false`, zero, and empty strings, lists,
@@ -340,4 +525,47 @@ fn escape_into(text: &str, out: &mut String) {
             c => out.push(c),
         }
     }
+}
+
+/// Whether a value is safe to put in a URL attribute such as `href`.
+///
+/// Relative URLs are safe. An absolute URL is safe only with a scheme from the
+/// allow list. Browsers ignore whitespace and control characters inside a
+/// scheme (`java&#9;script:`), so those are removed before the scheme is read.
+fn is_safe_url(url: &str) -> bool {
+    let cleaned: String = url
+        .chars()
+        .filter(|c| !c.is_control() && !c.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+
+    match cleaned.find(':') {
+        Some(colon) if !cleaned[..colon].contains(['/', '?', '#']) => {
+            matches!(&cleaned[..colon], "http" | "https" | "mailto" | "tel")
+        }
+        _ => true,
+    }
+}
+
+/// The HTML for `@dump` and `@dd`: the expression, its type, and its value as
+/// pretty-printed JSON, escaped.
+fn dump_html(expr: &Expr, value: &Value) -> String {
+    let kind = match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "list",
+        Value::Object(_) => "object",
+    };
+    let json = serde_json::to_string_pretty(value).unwrap_or_default();
+
+    let mut out = String::from(
+        r#"<pre style="background:#111;color:#eee;padding:1em;overflow:auto;font-size:13px"><strong>"#,
+    );
+    escape_into(&format!("${} ({kind})", expr.path.join(".")), &mut out);
+    out.push_str("</strong>\n");
+    escape_into(&json, &mut out);
+    out.push_str("</pre>");
+    out
 }

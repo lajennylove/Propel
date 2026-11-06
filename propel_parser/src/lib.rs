@@ -6,6 +6,7 @@
 
 mod ast;
 mod grammar;
+mod markup;
 
 use std::fmt;
 
@@ -34,23 +35,27 @@ pub fn parse(source: &str) -> Result<Template, ParseError> {
         .next()
         .expect("the `file` rule always produces one pair");
 
-    let nodes = file
+    let mut nodes: Vec<Node> = file
         .into_inner()
         .filter(|pair| pair.as_rule() != Rule::EOI)
         .map(node)
         .collect();
 
+    markup::annotate(&mut nodes);
     Ok(Template { nodes })
 }
 
 fn node(pair: Pair<'_, Rule>) -> Node {
     match pair.as_rule() {
         Rule::text => Node::Text(pair.as_str().to_owned()),
+        Rule::at_escape => Node::Text("@".into()),
+        Rule::brace_escape => Node::Text("{{".into()),
         Rule::echo => {
             let inner = child(pair);
             Node::Echo {
                 raw: inner.as_rule() == Rule::raw_echo,
                 expr: expr(child(inner)),
+                url_attribute: false,
             }
         }
         Rule::if_block => if_block(pair),
@@ -73,6 +78,14 @@ fn node(pair: Pair<'_, Rule>) -> Node {
             Node::Section { name, body }
         }
         Rule::yield_ => Node::Yield(string(child(pair))),
+        Rule::dump => Node::Dump {
+            expr: expr(child(pair)),
+            halt: false,
+        },
+        Rule::dd => Node::Dump {
+            expr: expr(child(pair)),
+            halt: true,
+        },
         rule => unreachable!("grammar produced unexpected node: {rule:?}"),
     }
 }
@@ -175,6 +188,7 @@ mod tests {
                         path: vec!["name".into()]
                     },
                     raw: false,
+                    url_attribute: false,
                 },
                 Node::Text(", ".into()),
                 Node::Echo {
@@ -182,6 +196,7 @@ mod tests {
                         path: vec!["html".into()]
                     },
                     raw: true,
+                    url_attribute: false,
                 },
                 Node::Text("!".into()),
             ]
@@ -197,13 +212,88 @@ mod tests {
                     path: vec!["post".into(), "author".into(), "name".into()],
                 },
                 raw: false,
+                url_attribute: false,
             }]
         );
     }
 
     #[test]
-    fn lone_at_is_text() {
+    fn at_sign_in_text_is_plain_text() {
         assert_eq!(nodes("me@ x"), vec![Node::Text("me@ x".into())]);
+        assert_eq!(
+            nodes("mail me@example.com"),
+            vec![Node::Text("mail me@example.com".into())]
+        );
+        assert_eq!(
+            nodes("<style>@media (min-width: 1px) {}</style>"),
+            vec![Node::Text(
+                "<style>@media (min-width: 1px) {}</style>".into()
+            )]
+        );
+    }
+
+    #[test]
+    fn unknown_directive_is_plain_text() {
+        assert_eq!(nodes("@foo bar"), vec![Node::Text("@foo bar".into())]);
+    }
+
+    #[test]
+    fn double_at_is_a_literal_at() {
+        assert_eq!(
+            nodes("@@if (x)"),
+            vec![Node::Text("@".into()), Node::Text("if (x)".into())]
+        );
+    }
+
+    #[test]
+    fn brace_escape_writes_a_literal_echo_opener() {
+        assert_eq!(
+            nodes("var o = @{{ a: 1 }};"),
+            vec![
+                Node::Text("var o = ".into()),
+                Node::Text("{{".into()),
+                Node::Text(" a: 1 }};".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn debug_helpers_parse() {
+        assert_eq!(
+            nodes("@dump($post.title)"),
+            vec![Node::Dump {
+                expr: Expr {
+                    path: vec!["post".into(), "title".into()]
+                },
+                halt: false,
+            }]
+        );
+        assert_eq!(
+            nodes("@dd($x)"),
+            vec![Node::Dump {
+                expr: Expr {
+                    path: vec!["x".into()]
+                },
+                halt: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn dump_prefixes_are_plain_text() {
+        assert_eq!(nodes("@dumped"), vec![Node::Text("@dumped".into())]);
+        assert_eq!(nodes("@ddd"), vec![Node::Text("@ddd".into())]);
+    }
+
+    #[test]
+    fn keyword_prefixes_are_plain_text() {
+        // `@sections` is not `@section`, and `@elsewhere` is not `@else`.
+        assert_eq!(nodes("@sections"), vec![Node::Text("@sections".into())]);
+        assert_eq!(nodes("@elsewhere"), vec![Node::Text("@elsewhere".into())]);
+        assert_eq!(
+            nodes("@yieldx('a')"),
+            vec![Node::Text("@yieldx('a')".into())]
+        );
     }
 
     #[test]

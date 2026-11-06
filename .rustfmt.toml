@@ -1,2 +1,3 @@
-# Own rustfmt config: the Rocket root config disables formatting for everything below it.
+# Own rustfmt config. Rocket's root config sets disable_all_formatting = true,
+# which would apply here too; this file overrides it for propel/.
 edition = "2021"

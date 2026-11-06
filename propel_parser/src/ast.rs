@@ -10,8 +10,13 @@ pub struct Template {
 pub enum Node {
     /// Literal template text, copied to the output unchanged.
     Text(String),
-    /// `{{ expr }}` (escaped) or `{!! expr !!}` (raw).
-    Echo { expr: Expr, raw: bool },
+    /// `{{ expr }}` (escaped) or `{!! expr !!}` (raw). `url_attribute` is set
+    /// when the echo sits in an `href`, `src` or similar value; see `markup`.
+    Echo {
+        expr: Expr,
+        raw: bool,
+        url_attribute: bool,
+    },
     /// `@if`, `@elseif`, `@else`, `@endif`.
     If {
         branches: Vec<Branch>,
@@ -30,6 +35,8 @@ pub enum Node {
     Section { name: String, body: Vec<Node> },
     /// `@yield('name')`.
     Yield(String),
+    /// `@dump($expr)`, or `@dd($expr)` when `halt` is set.
+    Dump { expr: Expr, halt: bool },
 }
 
 /// One `@if` or `@elseif` arm.
