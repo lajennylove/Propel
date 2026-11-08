@@ -141,13 +141,44 @@ fn node(pair: Pair<'_, Rule>) -> Node {
         }
         Rule::forelse_block => forelse_block(pair),
         Rule::extends => Node::Extends(string(child(pair))),
-        Rule::section => {
+        Rule::section | Rule::section_show => {
+            let show = pair.as_rule() == Rule::section_show;
             let mut inner = pair.into_inner();
             let name = string(inner.next().expect("section name"));
             let body = body(inner.next().expect("section body"));
-            Node::Section { name, body }
+            Node::Section { name, body, show }
         }
-        Rule::yield_ => Node::Yield(string(child(pair))),
+        Rule::yield_ => {
+            let mut inner = pair.into_inner();
+            let name = string(inner.next().expect("yield name"));
+            let default = inner.next().map(string);
+            Node::Yield { name, default }
+        }
+        Rule::parent => Node::Parent,
+        Rule::include => Node::Include(string(child(pair))),
+        Rule::stack => Node::Stack(string(child(pair))),
+        Rule::push | Rule::prepend => {
+            let prepend = pair.as_rule() == Rule::prepend;
+            let mut inner = pair.into_inner();
+            let name = string(inner.next().expect("stack name"));
+            let body = body(inner.next().expect("push body"));
+            Node::Push {
+                name,
+                body,
+                prepend,
+            }
+        }
+        Rule::has_section | Rule::section_missing => {
+            let present = pair.as_rule() == Rule::has_section;
+            let mut inner = pair.into_inner();
+            let name = string(inner.next().expect("section name"));
+            let body = body(inner.next().expect("section body"));
+            Node::HasSection {
+                name,
+                present,
+                body,
+            }
+        }
         Rule::dump => Node::Dump {
             expr: expr(child(pair)),
             halt: false,
@@ -426,8 +457,14 @@ mod tests {
         );
 
         let parsed = nodes("@section(\"title\") T @endsection @yield('title')");
-        assert!(matches!(&parsed[0], Node::Section { name, .. } if name == "title"));
-        assert_eq!(parsed[2], Node::Yield("title".into()));
+        assert!(matches!(&parsed[0], Node::Section { name, show: false, .. } if name == "title"));
+        assert_eq!(
+            parsed[2],
+            Node::Yield {
+                name: "title".into(),
+                default: None,
+            }
+        );
     }
 
     #[test]

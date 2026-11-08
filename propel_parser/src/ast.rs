@@ -32,9 +32,39 @@ pub enum Node {
     /// `@extends('name')`.
     Extends(String),
     /// `@section('name') ... @endsection`.
-    Section { name: String, body: Vec<Node> },
+    /// `@section('name') ... @endsection`, or `@section ... @show` when `show` is set,
+    /// which also renders the section where it stands.
+    Section {
+        name: String,
+        body: Vec<Node>,
+        show: bool,
+    },
     /// `@yield('name')`.
-    Yield(String),
+    /// `@yield('name')`, or `@yield('name', 'default')`, which prints the default
+    /// when no section fills the name.
+    Yield {
+        name: String,
+        default: Option<String>,
+    },
+    /// `@include('name')`: renders another view here, with the same data.
+    Include(String),
+    /// `@push('name') ... @endpush`, or `@prepend` when `prepend` is set. It renders
+    /// its body in the matching `@stack`, not where it stands.
+    Push {
+        name: String,
+        body: Vec<Node>,
+        prepend: bool,
+    },
+    /// `@stack('name')`: renders everything pushed to `name`.
+    Stack(String),
+    /// `@parent`: inside a section, the content of the same section one level up.
+    Parent,
+    /// `@hasSection('name') ... @endif`, or `@sectionMissing` when `present` is false.
+    HasSection {
+        name: String,
+        present: bool,
+        body: Vec<Node>,
+    },
     /// `{{ asset('path') }}`: the URL of a built file, or of the dev server.
     Asset {
         path: String,

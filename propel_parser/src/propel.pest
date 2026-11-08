@@ -6,7 +6,7 @@
 
 file = { SOI ~ node* ~ EOI }
 
-node = _{ comment | echo | if_block | foreach_block | forelse_block | extends | section | yield_ | vite | dump | dd | at_escape | brace_escape | raw_brace_escape | text }
+node = _{ comment | echo | if_block | foreach_block | forelse_block | extends | section | section_show | has_section | section_missing | yield_ | parent | include | push | prepend | stack | vite | dump | dd | at_escape | brace_escape | raw_brace_escape | text }
 
 comment = _{ "{{--" ~ (!"--}}" ~ ANY)* ~ "--}}" }
 
@@ -26,7 +26,9 @@ directive_start = _{ "@" ~ keyword ~ kw_end }
 keyword = _{
     "elseif" | "else" | "endif" | "if"
   | "endforeach" | "foreach" | "endforelse" | "forelse" | "empty"
-  | "endsection" | "section" | "extends" | "yield"
+  | "endsection" | "sectionMissing" | "section" | "extends" | "yield" | "parent"
+  | "hasSection" | "show" | "include"
+  | "endpush" | "push" | "endprepend" | "prepend" | "stack"
   | "dump" | "dd" | "vite"
 }
 
@@ -61,7 +63,17 @@ empty_branch = { "@empty" ~ kw_end ~ body }
 
 extends = { "@extends" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" }
 section = { "@section" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" ~ body ~ "@endsection" ~ kw_end }
-yield_ = { "@yield" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" }
+section_show = { "@section" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" ~ body ~ "@show" ~ kw_end }
+yield_ = { "@yield" ~ ws ~ "(" ~ ws ~ string ~ (ws ~ "," ~ ws ~ string)? ~ ws ~ ")" }
+parent = { "@parent" ~ kw_end }
+include = { "@include" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" }
+// Stacks: `@push` and `@prepend` add to a named stack, and `@stack` prints it.
+push = { "@push" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" ~ body ~ "@endpush" ~ kw_end }
+prepend = { "@prepend" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" ~ body ~ "@endprepend" ~ kw_end }
+stack = { "@stack" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" }
+// `@hasSection` and `@sectionMissing` are conditions, closed by `@endif`, as in Blade.
+has_section = { "@hasSection" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" ~ body ~ "@endif" ~ kw_end }
+section_missing = { "@sectionMissing" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" ~ body ~ "@endif" ~ kw_end }
 
 // `@vite('resources/js/app.js')` or `@vite(['resources/css/app.css', 'resources/js/app.js'])`:
 // the tags that load the entries. See `propel_runtime::Assets`.

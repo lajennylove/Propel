@@ -167,6 +167,8 @@ pub enum RenderError {
     LayoutTooDeep { template: String },
     /// `asset()` or `@vite()` names a file the build does not have.
     AssetNotBuilt { template: String, path: String },
+    /// `@include` nests deeper than `MAX_LAYOUT_DEPTH`, which means a cycle.
+    IncludeTooDeep { template: String },
     /// A `@section` is inside an `@if`, a loop, or another section.
     NestedSection { template: String, section: String },
     /// The context could not be converted to a value.
@@ -202,6 +204,9 @@ impl fmt::Display for RenderError {
                     f,
                     "asset `{path}` used in `{template}` is not built: run `npm run build`, or `npm run dev` while developing"
                 )
+            }
+            RenderError::IncludeTooDeep { template } => {
+                write!(f, "@include chain at `{template}` is too deep (a cycle?)")
             }
             RenderError::LayoutTooDeep { template } => {
                 write!(f, "@extends chain at `{template}` is too deep (a cycle?)")
@@ -243,9 +248,13 @@ where
         scopes: Vec::new(),
         template: String::new(),
         halted: false,
+        section_stack: Vec::new(),
+        include_depth: 0,
+        stacks: HashMap::new(),
     };
 
     let mut out = String::new();
+    renderer.collect_stacks(name, 0)?;
     renderer.page(name, HashMap::new(), 0, &mut out)?;
     Ok(out)
 }
@@ -258,8 +267,9 @@ struct Section {
     nodes: Vec<Node>,
 }
 
-/// `@section` bodies by name.
-type Sections = HashMap<String, Section>;
+/// The definitions of each section name, most derived template first. The
+/// first one is what a `@yield` shows. `@parent` shows the next one down.
+type Sections = HashMap<String, Vec<Section>>;
 
 struct Renderer<'a, L> {
     loader: &'a L,
@@ -271,6 +281,13 @@ struct Renderer<'a, L> {
     template: String,
     /// Set by `@dd`. Rendering stops at the next node.
     halted: bool,
+    /// The section definitions being rendered, innermost last, with their index
+    /// in `Sections`. `@parent` uses the top one.
+    section_stack: Vec<(String, usize)>,
+    /// How deep `@include` is nested right now.
+    include_depth: usize,
+    /// The `@push` and `@prepend` bodies by stack name, in print order.
+    stacks: HashMap<String, Vec<Vec<Node>>>,
 }
 
 impl<L: Loader> Renderer<'_, L> {
@@ -293,8 +310,11 @@ impl<L: Loader> Renderer<'_, L> {
         self.template = name.to_owned();
         let template = self.parse(name)?;
 
-        let mut sections = collect_sections(name, &template)?;
-        sections.extend(overrides);
+        // The derived templates' definitions come first, so they win.
+        let mut sections = overrides;
+        for (section_name, section) in collect_sections(name, &template)? {
+            sections.entry(section_name).or_default().push(section);
+        }
 
         let parent = template.nodes.iter().find_map(|node| match node {
             Node::Extends(parent) => Some(parent.as_str()),
@@ -417,20 +437,157 @@ impl<L: Loader> Renderer<'_, L> {
                     }
                 }
                 Node::Extends(_) => {}
-                // A section outside a layout renders in place.
-                Node::Section { body, .. } => self.nodes(body, sections, out)?,
-                Node::Yield(name) => {
-                    if let Some(section) = sections.get(name) {
-                        let outer = std::mem::replace(&mut self.template, section.template.clone());
-                        let result = self.nodes(&section.nodes, sections, out);
-                        self.template = outer;
-                        result?;
+                // A section only renders where it is shown with `@show`. Otherwise
+                // it is a definition for the layout's `@yield`, and it renders nothing.
+                Node::Section { name, show, .. } => {
+                    if *show {
+                        self.render_section(name, 0, sections, out)?;
+                    }
+                }
+                Node::Yield { name, default } => {
+                    if is_defined(sections, name) {
+                        self.render_section(name, 0, sections, out)?;
+                    } else if let Some(default) = default {
+                        escape_into(default, out);
+                    }
+                }
+                Node::Include(name) => {
+                    if self.include_depth >= MAX_LAYOUT_DEPTH {
+                        return Err(RenderError::IncludeTooDeep {
+                            template: name.clone(),
+                        });
+                    }
+
+                    let template = self.parse(name)?;
+                    let outer = std::mem::replace(&mut self.template, name.clone());
+                    self.include_depth += 1;
+                    let result = self.nodes(&template.nodes, sections, out);
+                    self.include_depth -= 1;
+                    self.template = outer;
+                    result?;
+                }
+                // A push renders in its stack, which is printed by `@stack`.
+                Node::Push { .. } => {}
+                Node::Stack(name) => {
+                    let bodies = self.stacks.get(name).cloned().unwrap_or_default();
+                    for body in bodies {
+                        self.nodes(&body, sections, out)?;
+                    }
+                }
+                Node::Parent => {
+                    if let Some((name, index)) = self.section_stack.last().cloned() {
+                        self.render_section(&name, index + 1, sections, out)?;
+                    }
+                }
+                Node::HasSection {
+                    name,
+                    present,
+                    body,
+                } => {
+                    if is_defined(sections, name) == *present {
+                        self.nodes(body, sections, out)?;
                     }
                 }
             }
         }
 
         Ok(())
+    }
+
+    /// Gathers the `@push` and `@prepend` bodies of `name`, its layouts and its
+    /// partials, so a `@stack` can print them even when it renders first.
+    fn collect_stacks(&mut self, name: &str, depth: usize) -> Result<(), RenderError> {
+        if depth > MAX_LAYOUT_DEPTH {
+            return Err(RenderError::LayoutTooDeep {
+                template: name.to_owned(),
+            });
+        }
+
+        let template = self.parse(name)?;
+        self.collect_pushes(&template.nodes, depth)?;
+
+        let parent = template.nodes.iter().find_map(|node| match node {
+            Node::Extends(parent) => Some(parent.clone()),
+            _ => None,
+        });
+        if let Some(parent) = parent {
+            self.collect_stacks(&parent, depth + 1)?;
+        }
+
+        Ok(())
+    }
+
+    fn collect_pushes(&mut self, nodes: &[Node], depth: usize) -> Result<(), RenderError> {
+        for node in nodes {
+            match node {
+                Node::Push {
+                    name,
+                    body,
+                    prepend,
+                } => {
+                    let stack = self.stacks.entry(name.clone()).or_default();
+                    if *prepend {
+                        stack.insert(0, body.clone());
+                    } else {
+                        stack.push(body.clone());
+                    }
+                    self.collect_pushes(body, depth)?;
+                }
+                Node::Section { body, .. } | Node::HasSection { body, .. } => {
+                    self.collect_pushes(body, depth)?;
+                }
+                Node::If {
+                    branches,
+                    otherwise,
+                } => {
+                    for branch in branches {
+                        self.collect_pushes(&branch.body, depth)?;
+                    }
+                    if let Some(otherwise) = otherwise {
+                        self.collect_pushes(otherwise, depth)?;
+                    }
+                }
+                Node::Loop { body, empty, .. } => {
+                    self.collect_pushes(body, depth)?;
+                    if let Some(empty) = empty {
+                        self.collect_pushes(empty, depth)?;
+                    }
+                }
+                Node::Include(name) => {
+                    if depth >= MAX_LAYOUT_DEPTH {
+                        return Err(RenderError::IncludeTooDeep {
+                            template: name.clone(),
+                        });
+                    }
+                    let template = self.parse(name)?;
+                    self.collect_pushes(&template.nodes, depth + 1)?;
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Renders definition `index` of section `name`. Inside it, `@parent`
+    /// renders definition `index + 1`. Nothing renders when that does not exist.
+    fn render_section(
+        &mut self,
+        name: &str,
+        index: usize,
+        sections: &Sections,
+        out: &mut String,
+    ) -> Result<(), RenderError> {
+        let Some(section) = sections.get(name).and_then(|defs| defs.get(index)) else {
+            return Ok(());
+        };
+
+        let outer = std::mem::replace(&mut self.template, section.template.clone());
+        self.section_stack.push((name.to_owned(), index));
+        let result = self.nodes(&section.nodes, sections, out);
+        self.section_stack.pop();
+        self.template = outer;
+        result
     }
 
     fn not_built(&self, path: &str) -> RenderError {
@@ -493,14 +650,18 @@ impl<L: Loader> Renderer<'_, L> {
 /// The top-level `@section`s of a template. A section anywhere else (inside
 /// an `@if`, a loop, or another section) is an error. It would otherwise be
 /// silently dropped, or rendered in an unexpected place.
-fn collect_sections(name: &str, template: &Template) -> Result<Sections, RenderError> {
-    let mut sections = Sections::new();
+fn collect_sections(
+    name: &str,
+    template: &Template,
+) -> Result<HashMap<String, Section>, RenderError> {
+    let mut sections = HashMap::new();
 
     for node in &template.nodes {
         match node {
             Node::Section {
                 name: section,
                 body,
+                ..
             } => {
                 if let Some(inner) = find_section(body) {
                     return Err(nested_section(name, inner));
@@ -528,6 +689,7 @@ fn collect_sections(name: &str, template: &Template) -> Result<Sections, RenderE
 fn find_section(nodes: &[Node]) -> Option<&str> {
     nodes.iter().find_map(|node| match node {
         Node::Section { name, .. } => Some(name.as_str()),
+        Node::HasSection { body, .. } => find_section(body),
         Node::If {
             branches,
             otherwise,
@@ -540,6 +702,11 @@ fn find_section(nodes: &[Node]) -> Option<&str> {
         }
         _ => None,
     })
+}
+
+/// Whether any template defines `@section` `name`.
+fn is_defined(sections: &Sections, name: &str) -> bool {
+    sections.get(name).is_some_and(|defs| !defs.is_empty())
 }
 
 fn nested_section(template: &str, section: &str) -> RenderError {

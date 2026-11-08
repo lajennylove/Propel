@@ -170,7 +170,19 @@ fn mark(nodes: &mut [Node], state: &mut State) {
                 let mut section_state = State::Text;
                 mark(body, &mut section_state);
             }
-            Node::Extends(_) | Node::Yield(_) | Node::Vite { .. } | Node::Dump { .. } => {}
+            Node::HasSection { body, .. } => mark(body, state),
+            Node::Push { body, .. } => {
+                // A stack is printed elsewhere, so it starts in text state.
+                let mut stack_state = State::Text;
+                mark(body, &mut stack_state);
+            }
+            Node::Extends(_)
+            | Node::Yield { .. }
+            | Node::Parent
+            | Node::Include(_)
+            | Node::Stack(_)
+            | Node::Vite { .. }
+            | Node::Dump { .. } => {}
         }
     }
 }
