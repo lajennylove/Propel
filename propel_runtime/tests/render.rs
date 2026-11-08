@@ -391,7 +391,8 @@ fn dump_tokens_cover_keys_strings_numbers_and_punctuation() {
     assert!(html.contains(r#"<span class="propel-dump-literal">1</span>"#));
     assert!(html.contains(r#"<span class="propel-dump-literal">true</span>"#));
     assert!(html.contains(r#"<span class="propel-dump-string">&quot;a&quot;</span>"#));
-    assert!(html.contains(r#"<span class="propel-dump-punct">{"#));
+    assert!(html.contains(r#"<span class="propel-dump-type">array:3 </span>"#));
+    assert!(html.contains("<details open"));
 }
 
 #[test]

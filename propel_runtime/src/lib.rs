@@ -767,73 +767,74 @@ fn is_safe_url(url: &str) -> bool {
     }
 }
 
-/// The HTML for `@dump` and `@dd`: the expression, its type, and its value as
-/// JSON, with each part in a token class (`propel-dump-key`, `-string`,
-/// `-literal`, `-punct`) so the app can colour them. All text is escaped.
+/// The HTML for `@dump` and `@dd`, laid out like Symfony's VarDumper: the
+/// expression, then the value as a tree. Each array or object is a `<details>`
+/// element, so it folds. Every part has a token class, and all text is escaped.
 fn dump_html(expr: &Expr, value: &Value) -> String {
-    let kind = match value {
-        Value::Null => "null",
-        Value::Bool(_) => "bool",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "list",
-        Value::Object(_) => "object",
-    };
-
-    let mut out = String::from(r#"<pre class="propel-dump"><strong>"#);
-    token(
-        &mut out,
-        "propel-dump-name",
-        &format!("${}", expr.path.join(".")),
-    );
-    out.push(' ');
-    token(&mut out, "propel-dump-type", &format!("({kind})"));
-    out.push_str("</strong>\n");
-    highlight(value, 0, &mut out);
-    out.push_str("</pre>");
+    let mut out = String::from(r#"<pre class="propel-dump"><span class="propel-dump-name">"#);
+    escape_into(&format!("${}", expr.path.join(".")), &mut out);
+    out.push_str("</span>\n");
+    dump_node(value, &mut out);
+    out.push_str("\n</pre>");
     out
 }
 
-/// Writes `value` as indented JSON, with a token class on each part.
-fn highlight(value: &Value, depth: usize, out: &mut String) {
+/// One value of the tree: a scalar on its own, or a folding container.
+fn dump_node(value: &Value, out: &mut String) {
     match value {
-        Value::Object(map) if !map.is_empty() => {
-            token(out, "propel-dump-punct", "{\n");
-            let last = map.len() - 1;
-            for (i, (key, value)) in map.iter().enumerate() {
-                indent(out, depth + 1);
-                token(out, "propel-dump-key", &json_string(key));
-                token(out, "propel-dump-punct", ": ");
-                highlight(value, depth + 1, out);
-                if i < last {
-                    token(out, "propel-dump-punct", ",");
-                }
-                out.push('\n');
-            }
-            indent(out, depth);
-            token(out, "propel-dump-punct", "}");
-        }
-        Value::Array(items) if !items.is_empty() => {
-            token(out, "propel-dump-punct", "[\n");
-            let last = items.len() - 1;
-            for (i, item) in items.iter().enumerate() {
-                indent(out, depth + 1);
-                highlight(item, depth + 1, out);
-                if i < last {
-                    token(out, "propel-dump-punct", ",");
-                }
-                out.push('\n');
-            }
-            indent(out, depth);
-            token(out, "propel-dump-punct", "]");
-        }
-        Value::Object(_) => token(out, "propel-dump-punct", "{}"),
-        Value::Array(_) => token(out, "propel-dump-punct", "[]"),
-        Value::String(text) => token(out, "propel-dump-string", &json_string(text)),
-        Value::Number(number) => token(out, "propel-dump-literal", &number.to_string()),
-        Value::Bool(flag) => token(out, "propel-dump-literal", &flag.to_string()),
         Value::Null => token(out, "propel-dump-literal", "null"),
+        Value::Bool(flag) => token(out, "propel-dump-literal", &flag.to_string()),
+        Value::Number(number) => token(out, "propel-dump-literal", &number.to_string()),
+        Value::String(text) => token(out, "propel-dump-string", &json_string(text)),
+        Value::Array(items) => {
+            let entries = items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| (index.to_string(), false, item))
+                .collect();
+            dump_container(&format!("array:{}", items.len()), entries, out);
+        }
+        Value::Object(map) => {
+            let entries = map
+                .iter()
+                .map(|(key, item)| (json_string(key), true, item))
+                .collect();
+            dump_container(&format!("array:{}", map.len()), entries, out);
+        }
     }
+}
+
+/// A folding container. Each entry is `(key, key_is_text, value)`. Arrays use
+/// their index as the key, and objects use their field names.
+fn dump_container(label: &str, entries: Vec<(String, bool, &Value)>, out: &mut String) {
+    token(out, "propel-dump-type", &format!("{label} "));
+
+    if entries.is_empty() {
+        token(out, "propel-dump-punct", "[]");
+        return;
+    }
+
+    out.push_str(r#"<details open class="propel-dump-node"><summary>"#);
+    token(out, "propel-dump-punct", "[");
+    out.push_str("</summary><div class=\"propel-dump-children\">");
+    for (key, is_text, item) in entries {
+        out.push_str(r#"<div class="propel-dump-entry">"#);
+        token(
+            out,
+            if is_text {
+                "propel-dump-key"
+            } else {
+                "propel-dump-literal"
+            },
+            &key,
+        );
+        token(out, "propel-dump-punct", " => ");
+        dump_node(item, out);
+        out.push_str("</div>");
+    }
+    out.push_str("</div>");
+    token(out, "propel-dump-punct", "]");
+    out.push_str("</details>");
 }
 
 /// `<span class="class">text</span>`, with the text escaped.
@@ -843,12 +844,6 @@ fn token(out: &mut String, class: &str, text: &str) {
     out.push_str(r#"">"#);
     escape_into(text, out);
     out.push_str("</span>");
-}
-
-fn indent(out: &mut String, depth: usize) {
-    for _ in 0..depth {
-        out.push_str("  ");
-    }
 }
 
 /// A string as JSON, with quotes and escapes, before HTML escaping.
