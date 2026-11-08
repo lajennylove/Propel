@@ -135,7 +135,7 @@ fn mark(nodes: &mut [Node], state: &mut State) {
     for node in nodes {
         match node {
             Node::Text(text) => state.advance(text),
-            Node::Echo { url_attribute, .. } => {
+            Node::Echo { url_attribute, .. } | Node::Asset { url_attribute, .. } => {
                 // An unquoted value can start with an echo: `src={{ $url }}`.
                 // The echo opens the value, so it is read as one.
                 if let State::Tag {
@@ -170,7 +170,7 @@ fn mark(nodes: &mut [Node], state: &mut State) {
                 let mut section_state = State::Text;
                 mark(body, &mut section_state);
             }
-            Node::Extends(_) | Node::Yield(_) | Node::Dump { .. } => {}
+            Node::Extends(_) | Node::Yield(_) | Node::Vite { .. } | Node::Dump { .. } => {}
         }
     }
 }

@@ -6,7 +6,7 @@
 
 file = { SOI ~ node* ~ EOI }
 
-node = _{ comment | echo | if_block | foreach_block | forelse_block | extends | section | yield_ | dump | dd | at_escape | brace_escape | text }
+node = _{ comment | echo | if_block | foreach_block | forelse_block | extends | section | yield_ | vite | dump | dd | at_escape | brace_escape | text }
 
 comment = _{ "{{--" ~ (!"--}}" ~ ANY)* ~ "--}}" }
 
@@ -25,12 +25,16 @@ keyword = _{
     "elseif" | "else" | "endif" | "if"
   | "endforeach" | "foreach" | "endforelse" | "forelse" | "empty"
   | "endsection" | "section" | "extends" | "yield"
-  | "dump" | "dd"
+  | "dump" | "dd" | "vite"
 }
 
 echo = { raw_echo | escaped_echo }
-escaped_echo = { "{{" ~ ws ~ expr ~ ws ~ "}}" }
-raw_echo = { "{!!" ~ ws ~ expr ~ ws ~ "!!}" }
+escaped_echo = { "{{" ~ ws ~ echo_value ~ ws ~ "}}" }
+raw_echo = { "{!!" ~ ws ~ echo_value ~ ws ~ "!!}" }
+
+// What an echo prints: a path, or an asset URL.
+echo_value = _{ asset_call | expr }
+asset_call = { "asset" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" }
 
 // A path such as `$title` or `post.title`. The leading `$` is optional.
 expr = @{ "$"? ~ name ~ ("." ~ name)* }
@@ -56,6 +60,11 @@ empty_branch = { "@empty" ~ kw_end ~ body }
 extends = { "@extends" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" }
 section = { "@section" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" ~ body ~ "@endsection" ~ kw_end }
 yield_ = { "@yield" ~ ws ~ "(" ~ ws ~ string ~ ws ~ ")" }
+
+// `@vite('resources/js/app.js')` or `@vite(['resources/css/app.css', 'resources/js/app.js'])`:
+// the tags that load the entries. See `propel_runtime::Assets`.
+vite = { "@vite" ~ ws ~ "(" ~ ws ~ (vite_list | string) ~ ws ~ ")" }
+vite_list = { "[" ~ ws ~ string ~ (ws ~ "," ~ ws ~ string)* ~ ws ~ ","? ~ ws ~ "]" }
 
 // Debug helpers. `@dump` prints a value and carries on. `@dd` prints it and stops.
 // The runtime renders them only in debug builds.

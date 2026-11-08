@@ -163,6 +163,8 @@ pub enum RenderError {
     NotPrintable { template: String, path: String },
     /// The `@extends` chain is deeper than `MAX_LAYOUT_DEPTH`.
     LayoutTooDeep { template: String },
+    /// `asset()` or `@vite()` names a file the build does not have.
+    AssetNotBuilt { template: String, path: String },
     /// A `@section` is inside an `@if`, a loop, or another section.
     NestedSection { template: String, section: String },
     /// The context could not be converted to a value.
@@ -193,6 +195,12 @@ impl fmt::Display for RenderError {
                     "@section('{section}') in `{template}` must be at the top level of the template"
                 )
             }
+            RenderError::AssetNotBuilt { template, path } => {
+                write!(
+                    f,
+                    "asset `{path}` used in `{template}` is not built: run `npm run build`, or `npm run dev` while developing"
+                )
+            }
             RenderError::LayoutTooDeep { template } => {
                 write!(f, "@extends chain at `{template}` is too deep (a cycle?)")
             }
@@ -211,9 +219,24 @@ where
     L: Loader,
     C: Serialize,
 {
+    render_with_assets(loader, &Assets::new("public"), name, context)
+}
+
+/// Renders `name` with `context`, resolving `asset()` and `@vite()` with `assets`.
+pub fn render_with_assets<L, C>(
+    loader: &L,
+    assets: &Assets,
+    name: &str,
+    context: &C,
+) -> Result<String, RenderError>
+where
+    L: Loader,
+    C: Serialize,
+{
     let context = serde_json::to_value(context).map_err(RenderError::Context)?;
     let mut renderer = Renderer {
         loader,
+        assets,
         context,
         scopes: Vec::new(),
         template: String::new(),
@@ -238,6 +261,7 @@ type Sections = HashMap<String, Section>;
 
 struct Renderer<'a, L> {
     loader: &'a L,
+    assets: &'a Assets,
     context: Value,
     /// Loop variables, innermost last.
     scopes: Vec<(String, Value)>,
@@ -297,6 +321,21 @@ impl<L: Loader> Renderer<'_, L> {
             }
             match node {
                 Node::Text(text) => out.push_str(text),
+                Node::Asset { path, raw, .. } => {
+                    let url = self.assets.url(path).ok_or_else(|| self.not_built(path))?;
+                    if *raw {
+                        out.push_str(&url);
+                    } else {
+                        escape_into(&url, out);
+                    }
+                }
+                Node::Vite { entries } => {
+                    let html = self
+                        .assets
+                        .tags(entries)
+                        .ok_or_else(|| self.not_built(&entries.join(", ")))?;
+                    out.push_str(&html);
+                }
                 Node::Echo {
                     expr,
                     raw,
@@ -390,6 +429,13 @@ impl<L: Loader> Renderer<'_, L> {
         }
 
         Ok(())
+    }
+
+    fn not_built(&self, path: &str) -> RenderError {
+        RenderError::AssetNotBuilt {
+            template: self.template.clone(),
+            path: path.to_owned(),
+        }
     }
 
     /// Finds the value of a path. Loop variables shadow the context.
@@ -568,4 +614,125 @@ fn dump_html(expr: &Expr, value: &Value) -> String {
     escape_into(&json, &mut out);
     out.push_str("</pre>");
     out
+}
+
+/// Resolves `asset()` and `@vite()` to URLs.
+///
+/// Two sources, the same convention as Laravel's Vite plugin:
+///
+/// - **Development.** While `vite` runs, the plugin writes its URL to
+///   `public/hot`. Every asset then points at the dev server, and `@vite()`
+///   adds the HMR client.
+/// - **Production.** After `vite build`, `public/build/manifest.json` maps each
+///   entry to its hashed file. Images and fonts are copied to
+///   `public/build/resources`, so they resolve by their source path.
+///
+/// The hot file wins when it exists. Paths are relative to `public`, and are
+/// read again on every render, so a rebuild or a new dev server takes effect
+/// on the next request.
+#[derive(Debug, Clone)]
+pub struct Assets {
+    public: PathBuf,
+}
+
+impl Assets {
+    /// `public` is the directory that holds `hot` and `build/`.
+    pub fn new(public: impl Into<PathBuf>) -> Self {
+        Self {
+            public: public.into(),
+        }
+    }
+
+    /// The dev server URL, when `public/hot` exists.
+    fn dev_server(&self) -> Option<String> {
+        let url = std::fs::read_to_string(self.public.join("hot")).ok()?;
+        Some(url.trim().trim_end_matches('/').to_owned())
+    }
+
+    fn manifest(&self) -> Option<Value> {
+        let source = std::fs::read_to_string(self.public.join("build/manifest.json")).ok()?;
+        serde_json::from_str(&source).ok()
+    }
+
+    /// The URL of one file, such as `resources/images/logo.svg`. `None` when
+    /// the file is neither in the build nor served by the dev server.
+    pub fn url(&self, path: &str) -> Option<String> {
+        if !is_relative(path) {
+            return None;
+        }
+
+        if let Some(server) = self.dev_server() {
+            return Some(format!("{server}/{path}"));
+        }
+
+        let manifest = self.manifest();
+        let file = manifest
+            .as_ref()
+            .and_then(|manifest| manifest.get(path))
+            .and_then(|entry| entry.get("file"))
+            .and_then(Value::as_str);
+        if let Some(file) = file {
+            return Some(format!("/build/{file}"));
+        }
+
+        // Images and fonts are copied as they are, so they keep their path.
+        self.public
+            .join("build")
+            .join(path)
+            .is_file()
+            .then(|| format!("/build/{path}"))
+    }
+
+    /// The tags that load `entries`, for `@vite()`. `None` when an entry is
+    /// missing from the build.
+    pub fn tags(&self, entries: &[String]) -> Option<String> {
+        let mut html = String::new();
+
+        if let Some(server) = self.dev_server() {
+            html.push_str(&format!(
+                "<script type=\"module\" src=\"{server}/@vite/client\"></script>\n"
+            ));
+            for entry in entries {
+                html.push_str(&tag(&format!("{server}/{entry}"), entry));
+            }
+            return Some(html);
+        }
+
+        let manifest = self.manifest()?;
+        for entry in entries {
+            let info = manifest.get(entry)?;
+
+            // CSS that the entry imports is loaded with it.
+            for css in info
+                .get("css")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                html.push_str(&tag(&format!("/build/{}", css.as_str()?), "style.css"));
+            }
+
+            let file = info.get("file")?.as_str()?;
+            html.push_str(&tag(&format!("/build/{file}"), file));
+        }
+
+        Some(html)
+    }
+}
+
+/// Whether `path` stays inside `public`: no leading `/`, and no `..` segment.
+fn is_relative(path: &str) -> bool {
+    !path.starts_with('/') && !path.split('/').any(|segment| segment == "..")
+}
+
+/// A `<link>` for CSS and a module `<script>` for anything else.
+fn tag(url: &str, kind: &str) -> String {
+    let mut escaped = String::new();
+    escape_into(url, &mut escaped);
+
+    if kind.ends_with(".css") {
+        format!("<link rel=\"stylesheet\" href=\"{escaped}\">\n")
+    } else {
+        format!("<script type=\"module\" src=\"{escaped}\"></script>\n")
+    }
 }

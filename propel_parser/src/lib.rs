@@ -103,11 +103,29 @@ fn node(pair: Pair<'_, Rule>) -> Node {
         Rule::brace_escape => Node::Text("{{".into()),
         Rule::echo => {
             let inner = child(pair);
-            Node::Echo {
-                raw: inner.as_rule() == Rule::raw_echo,
-                expr: expr(child(inner)),
-                url_attribute: false,
+            let raw = inner.as_rule() == Rule::raw_echo;
+            let value = child(inner);
+
+            match value.as_rule() {
+                Rule::asset_call => Node::Asset {
+                    path: string(child(value)),
+                    raw,
+                    url_attribute: false,
+                },
+                _ => Node::Echo {
+                    raw,
+                    expr: expr(value),
+                    url_attribute: false,
+                },
             }
+        }
+        Rule::vite => {
+            let inner = child(pair);
+            let entries = match inner.as_rule() {
+                Rule::vite_list => inner.into_inner().map(string).collect(),
+                _ => vec![string(inner)],
+            };
+            Node::Vite { entries }
         }
         Rule::if_block => if_block(pair),
         Rule::foreach_block => {
@@ -404,6 +422,46 @@ mod tests {
         let error = parse("Open the @dump page").unwrap_err().to_string();
         assert!(error.contains("hint:"), "{error}");
         assert!(error.contains("write `@@dump`"), "{error}");
+    }
+
+    #[test]
+    fn asset_call_is_an_asset_node() {
+        assert_eq!(
+            nodes("{{ asset('resources/images/x.svg') }}"),
+            vec![Node::Asset {
+                path: "resources/images/x.svg".into(),
+                raw: false,
+                url_attribute: false,
+            }]
+        );
+        assert!(matches!(
+            &nodes("{!! asset(\"resources/fonts/a.woff2\") !!}")[0],
+            Node::Asset { raw: true, path, .. } if path == "resources/fonts/a.woff2"
+        ));
+    }
+
+    #[test]
+    fn plain_asset_word_is_still_a_path() {
+        assert!(matches!(
+            &nodes("{{ $asset }}")[0],
+            Node::Echo { expr, .. } if expr.path == ["asset"]
+        ));
+    }
+
+    #[test]
+    fn vite_takes_one_entry_or_a_list() {
+        assert_eq!(
+            nodes("@vite('resources/js/app.js')"),
+            vec![Node::Vite {
+                entries: vec!["resources/js/app.js".into()],
+            }]
+        );
+        assert_eq!(
+            nodes("@vite(['resources/css/app.css', 'resources/js/app.js',])"),
+            vec![Node::Vite {
+                entries: vec!["resources/css/app.css".into(), "resources/js/app.js".into()],
+            }]
+        );
     }
 
     #[test]

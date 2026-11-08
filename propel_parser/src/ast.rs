@@ -35,6 +35,14 @@ pub enum Node {
     Section { name: String, body: Vec<Node> },
     /// `@yield('name')`.
     Yield(String),
+    /// `{{ asset('path') }}`: the URL of a built file, or of the dev server.
+    Asset {
+        path: String,
+        raw: bool,
+        url_attribute: bool,
+    },
+    /// `@vite(['entry', ...])`: the tags that load the entries.
+    Vite { entries: Vec<String> },
     /// `@dump($expr)`, or `@dd($expr)` when `halt` is set.
     Dump { expr: Expr, halt: bool },
 }

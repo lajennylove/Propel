@@ -60,6 +60,10 @@ Two speeds, both in use:
 - **Shared tests (planned).** Template behavior is tested in `propel_runtime/tests/`. When the compiled path exists, the same test cases must pass against both renderers, so the two can't drift.
 - Views are read from `views/` relative to the working directory. Run the app from its own directory.
 
+## Assets
+
+Templates can use `{{ asset('resources/images/x.svg') }}` and `@vite(['resources/css/app.css', 'resources/js/app.js'])`. `propel_runtime::Assets` resolves them with the same convention as Laravel's Vite plugin: `public/hot` (the dev server, while it runs) first, then `public/build/manifest.json`. A file in neither place is an error that names the file. Details and setup are in `examples/propel/README.md`.
+
 ## Debug helpers
 
 - `@dump($expr)` prints the expression, its type and its value as JSON, then keeps rendering.
