@@ -255,3 +255,21 @@ fn empty_stack_prints_nothing() {
     );
     assert_eq!(html, "[]");
 }
+
+#[cfg(debug_assertions)]
+#[test]
+fn dd_stops_its_section_and_the_layout_still_finishes() {
+    let layout = "<main>@yield('content')</main><footer>end</footer>";
+    let page = "@extends('layout')\n@section('content') before @dd($x) after @endsection";
+    let html = render_with(
+        "dd_scope",
+        &[("layout", layout), ("page", page)],
+        "page",
+        &serde_json::json!({ "x": 1 }),
+    )
+    .unwrap();
+
+    assert!(html.starts_with("<main> before <pre"));
+    assert!(!html.contains(" after "));
+    assert!(html.ends_with("</pre></main><footer>end</footer>"));
+}

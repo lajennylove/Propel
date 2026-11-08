@@ -279,7 +279,8 @@ struct Renderer<'a, L> {
     scopes: Vec<(String, Value)>,
     /// The template being rendered, for error messages.
     template: String,
-    /// Set by `@dd`. Rendering stops at the next node.
+    /// Set by `@dd`. Rendering stops at the next node, up to the end of the
+    /// section or partial that holds it.
     halted: bool,
     /// The section definitions being rendered, innermost last, with their index
     /// in `Sections`. `@parent` uses the top one.
@@ -462,6 +463,8 @@ impl<L: Loader> Renderer<'_, L> {
                     let outer = std::mem::replace(&mut self.template, name.clone());
                     self.include_depth += 1;
                     let result = self.nodes(&template.nodes, sections, out);
+                    // `@dd` stops only the partial it is in.
+                    self.halted = false;
                     self.include_depth -= 1;
                     self.template = outer;
                     result?;
@@ -585,6 +588,8 @@ impl<L: Loader> Renderer<'_, L> {
         let outer = std::mem::replace(&mut self.template, section.template.clone());
         self.section_stack.push((name.to_owned(), index));
         let result = self.nodes(&section.nodes, sections, out);
+        // `@dd` stops only the section it is in, so the layout still finishes.
+        self.halted = false;
         self.section_stack.pop();
         self.template = outer;
         result
