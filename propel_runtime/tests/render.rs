@@ -393,3 +393,18 @@ fn dump_tokens_cover_keys_strings_numbers_and_punctuation() {
     assert!(html.contains(r#"<span class="propel-dump-string">&quot;a&quot;</span>"#));
     assert!(html.contains(r#"<span class="propel-dump-punct">{"#));
 }
+
+#[test]
+fn hyphens_are_part_of_the_file_name() {
+    let context = serde_json::json!({});
+    let html = render_inline("hyphen_name", "hyphen ok", &context).unwrap();
+    assert_eq!(html, "hyphen ok");
+
+    let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("hyphen_file");
+    fs::create_dir_all(root.join("docs")).unwrap();
+    fs::write(root.join("docs/vite-tailwind.propel"), "found").unwrap();
+    assert_eq!(
+        render(&FileLoader::new(&root), "docs.vite-tailwind", &()).unwrap(),
+        "found"
+    );
+}

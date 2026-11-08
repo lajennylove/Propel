@@ -101,6 +101,7 @@ fn node(pair: Pair<'_, Rule>) -> Node {
         Rule::text => Node::Text(pair.as_str().to_owned()),
         Rule::at_escape => Node::Text("@".into()),
         Rule::brace_escape => Node::Text("{{".into()),
+        Rule::raw_brace_escape => Node::Text("{!!".into()),
         Rule::echo => {
             let inner = child(pair);
             let raw = inner.as_rule() == Rule::raw_echo;
@@ -352,6 +353,18 @@ mod tests {
     fn dump_prefixes_are_plain_text() {
         assert_eq!(nodes("@dumped"), vec![Node::Text("@dumped".into())]);
         assert_eq!(nodes("@ddd"), vec![Node::Text("@ddd".into())]);
+    }
+
+    #[test]
+    fn raw_tag_can_be_written_as_text() {
+        assert_eq!(
+            nodes("Use @{!! $x !!} for raw output."),
+            vec![
+                Node::Text("Use ".into()),
+                Node::Text("{!!".into()),
+                Node::Text(" $x !!} for raw output.".into()),
+            ]
+        );
     }
 
     #[test]

@@ -6,18 +6,20 @@
 
 file = { SOI ~ node* ~ EOI }
 
-node = _{ comment | echo | if_block | foreach_block | forelse_block | extends | section | yield_ | vite | dump | dd | at_escape | brace_escape | text }
+node = _{ comment | echo | if_block | foreach_block | forelse_block | extends | section | yield_ | vite | dump | dd | at_escape | brace_escape | raw_brace_escape | text }
 
 comment = _{ "{{--" ~ (!"--}}" ~ ANY)* ~ "--}}" }
 
 // `@@` produces a literal "@", so a directive-like string can be written out.
 at_escape = { "@@" }
 // `@{{` produces a literal "{{", for JavaScript or CSS that uses braces.
+// `@{!!` produces a literal "{!!", so the raw-output tag can appear in text.
 brace_escape = { "@{{" }
+raw_brace_escape = { "@{!!" }
 
 // Text runs up to the next echo, escape, or known directive. Anything else
 // that starts with "@" is plain text, so `me@example.com` and `@media` work.
-text = @{ (!("{{" | "{!!" | "@@" | "@{{" | directive_start) ~ ANY)+ }
+text = @{ (!("{{" | "{!!" | "@@" | "@{{" | "@{!!" | directive_start) ~ ANY)+ }
 directive_start = _{ "@" ~ keyword ~ kw_end }
 // Longer names come first: a shorter name that is a prefix of a longer one
 // would otherwise match and then fail the `kw_end` check.

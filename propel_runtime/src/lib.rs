@@ -72,7 +72,9 @@ fn cache() -> &'static Mutex<HashMap<PathBuf, CachedTemplate>> {
 /// Reads `<root>/<name>.propel`, with dots in the name as directory
 /// separators. `posts.index` reads `<root>/posts/index.propel`.
 ///
-/// Names may only contain ASCII letters, digits and `_`, separated by dots.
+/// Names may only contain ASCII letters, digits, `_` and `-`, separated by dots.
+/// A hyphen is part of the file name: `docs.vite-tailwind` reads
+/// `docs/vite-tailwind.propel`.
 /// Anything else (a leading `/`, `..`, a backslash) is rejected before the
 /// file system is touched, so a name can never point outside `root`.
 #[derive(Debug, Clone)]
@@ -90,7 +92,7 @@ impl FileLoader {
             !segment.is_empty()
                 && segment
                     .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
         });
 
         if !valid {
