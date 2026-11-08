@@ -64,6 +64,8 @@ Two speeds, both in use:
 
 Templates can use `{{ asset('resources/images/x.svg') }}` and `@vite(['resources/css/app.css', 'resources/js/app.js'])`. `propel_runtime::Assets` resolves them with the same convention as Laravel's Vite plugin: `public/hot` (the dev server, while it runs) first, then `public/build/manifest.json`. A file in neither place is an error that names the file. Details and setup are in `examples/propel/README.md`.
 
+Setup, folder layout, templates, dev and production workflow, and troubleshooting: see [`docs/assets.md`](docs/assets.md).
+
 ## Debug helpers
 
 - `@dump($expr)` prints the expression, its type and its value as JSON, then keeps rendering.
