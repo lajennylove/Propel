@@ -54,18 +54,92 @@ impl<'r> Responder<'r, 'static> for PropelView {
             Err(error) => {
                 rocket::trace::error!("propel: {error}");
 
-                let message = if cfg!(debug_assertions) {
-                    error.to_string()
+                // Debug builds explain the error in a page. Release builds say
+                // nothing about the templates.
+                let (content_type, body) = if cfg!(debug_assertions) {
+                    (ContentType::HTML, error_page(&error))
                 } else {
-                    "Internal Server Error".to_owned()
+                    (ContentType::Plain, "Internal Server Error".to_owned())
                 };
 
                 Response::build()
                     .status(Status::InternalServerError)
-                    .header(ContentType::Plain)
-                    .sized_body(message.len(), Cursor::new(message))
+                    .header(content_type)
+                    .sized_body(body.len(), Cursor::new(body))
                     .ok()
             }
         }
+    }
+}
+
+/// The debug page for a render error: the message, a hint about what to do, and
+/// the page's style. Everything from the error is escaped.
+fn error_page(error: &RenderError) -> String {
+    let message = escape(&error.to_string());
+    let hint = escape(hint(error));
+
+    format!(
+        r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Propel: render error</title>
+<style>
+body {{ font-family: system-ui, sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem; color: #353841; line-height: 1.7; }}
+h1 {{ font-size: 2rem; font-weight: 600; color: #17181c; }}
+.hint {{ background: #edeef3; padding: 1rem; }}
+pre {{ background: #f6f7f9; padding: 1rem; white-space: pre-wrap; font-size: 14px; }}
+</style>
+</head>
+<body>
+<h1>Propel could not render this page</h1>
+<p class="hint">{hint}</p>
+<pre>{message}</pre>
+<p>This page is shown only in debug builds. Release builds show a generic error, and the details go to the log.</p>
+</body>
+</html>
+"#
+    )
+}
+
+/// What to do about each kind of render error.
+fn hint(error: &RenderError) -> &'static str {
+    match error {
+        RenderError::Undefined { .. } => "The view uses a variable that the handler's context does not have. Add the field to the context struct and set it in the handler, or correct the name in the view.",
+        RenderError::NotIterable { .. } => "A loop expects a list. Check that the field is a Vec, or an Option of one, in the context.",
+        RenderError::NotPrintable { .. } => "The value is a list or an object, which has no text form. Print one of its fields instead.",
+        RenderError::Parse { .. } => "The template has a syntax error. The message points at the line. Check the directive it names, and the @@ escape for a directive word written as text.",
+        RenderError::NestedSection { .. } => "A @section must be at the top level of the view. Move it out of the @if or loop, and put the condition inside the section's content.",
+        RenderError::AssetNotBuilt { .. } => "The file is not in the build. Run npm run dev while developing, or npm run build before deploying.",
+        RenderError::Load { .. } => "The view file could not be read. Check the view name, and that the views folder exists where the app runs.",
+        RenderError::LayoutTooDeep { .. } => "A chain of @extends refers back to itself. Check the layout names.",
+        RenderError::IncludeTooDeep { .. } => "A chain of @include refers back to itself. Check the partial names.",
+        RenderError::Context(_) => "The context could not be converted to a value. Check that its struct derives Serialize.",
+    }
+}
+
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_page_escapes_the_message_and_gives_a_hint() {
+        let error = RenderError::Undefined {
+            template: "<b>page</b>".into(),
+            path: "x".into(),
+        };
+        let page = error_page(&error);
+
+        assert!(page.contains("undefined variable `x` in `&lt;b&gt;page&lt;/b&gt;`"));
+        assert!(page.contains("context does not have"));
+        assert!(!page.contains("<b>page</b>"));
     }
 }
