@@ -594,7 +594,8 @@ fn is_safe_url(url: &str) -> bool {
 }
 
 /// The HTML for `@dump` and `@dd`: the expression, its type, and its value as
-/// pretty-printed JSON, escaped.
+/// JSON, with each part in a token class (`propel-dump-key`, `-string`,
+/// `-literal`, `-punct`) so the app can colour them. All text is escaped.
 fn dump_html(expr: &Expr, value: &Value) -> String {
     let kind = match value {
         Value::Null => "null",
@@ -604,15 +605,81 @@ fn dump_html(expr: &Expr, value: &Value) -> String {
         Value::Array(_) => "list",
         Value::Object(_) => "object",
     };
-    let json = serde_json::to_string_pretty(value).unwrap_or_default();
 
-    // The style comes from the app's CSS, through the `propel-dump` class.
     let mut out = String::from(r#"<pre class="propel-dump"><strong>"#);
-    escape_into(&format!("${} ({kind})", expr.path.join(".")), &mut out);
+    token(
+        &mut out,
+        "propel-dump-name",
+        &format!("${}", expr.path.join(".")),
+    );
+    out.push(' ');
+    token(&mut out, "propel-dump-type", &format!("({kind})"));
     out.push_str("</strong>\n");
-    escape_into(&json, &mut out);
+    highlight(value, 0, &mut out);
     out.push_str("</pre>");
     out
+}
+
+/// Writes `value` as indented JSON, with a token class on each part.
+fn highlight(value: &Value, depth: usize, out: &mut String) {
+    match value {
+        Value::Object(map) if !map.is_empty() => {
+            token(out, "propel-dump-punct", "{\n");
+            let last = map.len() - 1;
+            for (i, (key, value)) in map.iter().enumerate() {
+                indent(out, depth + 1);
+                token(out, "propel-dump-key", &json_string(key));
+                token(out, "propel-dump-punct", ": ");
+                highlight(value, depth + 1, out);
+                if i < last {
+                    token(out, "propel-dump-punct", ",");
+                }
+                out.push('\n');
+            }
+            indent(out, depth);
+            token(out, "propel-dump-punct", "}");
+        }
+        Value::Array(items) if !items.is_empty() => {
+            token(out, "propel-dump-punct", "[\n");
+            let last = items.len() - 1;
+            for (i, item) in items.iter().enumerate() {
+                indent(out, depth + 1);
+                highlight(item, depth + 1, out);
+                if i < last {
+                    token(out, "propel-dump-punct", ",");
+                }
+                out.push('\n');
+            }
+            indent(out, depth);
+            token(out, "propel-dump-punct", "]");
+        }
+        Value::Object(_) => token(out, "propel-dump-punct", "{}"),
+        Value::Array(_) => token(out, "propel-dump-punct", "[]"),
+        Value::String(text) => token(out, "propel-dump-string", &json_string(text)),
+        Value::Number(number) => token(out, "propel-dump-literal", &number.to_string()),
+        Value::Bool(flag) => token(out, "propel-dump-literal", &flag.to_string()),
+        Value::Null => token(out, "propel-dump-literal", "null"),
+    }
+}
+
+/// `<span class="class">text</span>`, with the text escaped.
+fn token(out: &mut String, class: &str, text: &str) {
+    out.push_str(r#"<span class=""#);
+    out.push_str(class);
+    out.push_str(r#"">"#);
+    escape_into(text, out);
+    out.push_str("</span>");
+}
+
+fn indent(out: &mut String, depth: usize) {
+    for _ in 0..depth {
+        out.push_str("  ");
+    }
+}
+
+/// A string as JSON, with quotes and escapes, before HTML escaping.
+fn json_string(text: &str) -> String {
+    serde_json::to_string(text).unwrap_or_default()
 }
 
 /// Resolves `asset()` and `@vite()` to URLs.

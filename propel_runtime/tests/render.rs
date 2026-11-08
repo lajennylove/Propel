@@ -358,7 +358,8 @@ fn dump_prints_and_rendering_continues() {
 
     assert!(html.starts_with("a <pre"));
     assert!(html.ends_with("</pre> b"));
-    assert!(html.contains("$x (object)"));
+    assert!(html.contains(r#"<span class="propel-dump-name">$x</span>"#));
+    assert!(html.contains(r#"<span class="propel-dump-key">&quot;a&quot;</span>"#));
     assert!(html.contains("&lt;b&gt;"));
 }
 
@@ -379,4 +380,16 @@ fn dump_of_an_undefined_variable_is_an_error() {
     let error =
         render_inline("dump_missing", "@dump($nope)", &serde_json::json!({})).expect_err("nope");
     assert!(matches!(error, RenderError::Undefined { ref path, .. } if path == "nope"));
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn dump_tokens_cover_keys_strings_numbers_and_punctuation() {
+    let context = serde_json::json!({ "x": { "n": 1, "ok": true, "items": ["a"] } });
+    let html = render_inline("dump_tokens", "@dump($x)", &context).unwrap();
+
+    assert!(html.contains(r#"<span class="propel-dump-literal">1</span>"#));
+    assert!(html.contains(r#"<span class="propel-dump-literal">true</span>"#));
+    assert!(html.contains(r#"<span class="propel-dump-string">&quot;a&quot;</span>"#));
+    assert!(html.contains(r#"<span class="propel-dump-punct">{"#));
 }
