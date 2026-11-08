@@ -16,13 +16,61 @@ use pest::Parser;
 pub use ast::*;
 use grammar::{PropelParser, Rule};
 
+/// The words that start a directive. Keep in step with `keyword` in the grammar.
+const DIRECTIVES: &[&str] = &[
+    "if",
+    "elseif",
+    "else",
+    "endif",
+    "foreach",
+    "endforeach",
+    "forelse",
+    "endforelse",
+    "empty",
+    "section",
+    "endsection",
+    "extends",
+    "yield",
+    "dump",
+    "dd",
+];
+
+/// When the error is at a directive word, the hint says how to write it as text.
+/// A malformed directive gets the same hint, so the hint lists both options.
+fn hint(source: &str, error: &pest::error::Error<Rule>) -> Option<String> {
+    let pos = match error.location {
+        pest::error::InputLocation::Pos(pos) => pos,
+        pest::error::InputLocation::Span((start, _)) => start,
+    };
+
+    let rest = source.get(pos..)?.strip_prefix('@')?;
+    let word: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+
+    DIRECTIVES.contains(&word.as_str()).then(|| {
+        format!(
+            "`@{word}` is a directive. For literal text write `@@{word}`. For a directive, check its syntax."
+        )
+    })
+}
+
 /// A template that failed to parse. Display shows the position of the error.
 #[derive(Debug)]
-pub struct ParseError(pest::error::Error<Rule>);
+pub struct ParseError {
+    error: Box<pest::error::Error<Rule>>,
+    /// What to try, when the error is at a directive word.
+    hint: Option<String>,
+}
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
+        fmt::Display::fmt(&self.error, f)?;
+        if let Some(hint) = &self.hint {
+            write!(f, "\n  hint: {hint}")?;
+        }
+        Ok(())
     }
 }
 
@@ -31,7 +79,10 @@ impl std::error::Error for ParseError {}
 /// Parses one template.
 pub fn parse(source: &str) -> Result<Template, ParseError> {
     let file = PropelParser::parse(Rule::file, source)
-        .map_err(ParseError)?
+        .map_err(|error| ParseError {
+            hint: hint(source, &error),
+            error: Box::new(error),
+        })?
         .next()
         .expect("the `file` rule always produces one pair");
 
@@ -346,6 +397,13 @@ mod tests {
         let parsed = nodes("@section(\"title\") T @endsection @yield('title')");
         assert!(matches!(&parsed[0], Node::Section { name, .. } if name == "title"));
         assert_eq!(parsed[2], Node::Yield("title".into()));
+    }
+
+    #[test]
+    fn bare_directive_word_gets_a_hint() {
+        let error = parse("Open the @dump page").unwrap_err().to_string();
+        assert!(error.contains("hint:"), "{error}");
+        assert!(error.contains("write `@@dump`"), "{error}");
     }
 
     #[test]
