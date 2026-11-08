@@ -606,9 +606,8 @@ fn dump_html(expr: &Expr, value: &Value) -> String {
     };
     let json = serde_json::to_string_pretty(value).unwrap_or_default();
 
-    let mut out = String::from(
-        r#"<pre style="background:#111;color:#eee;padding:1em;overflow:auto;font-size:13px"><strong>"#,
-    );
+    // The style comes from the app's CSS, through the `propel-dump` class.
+    let mut out = String::from(r#"<pre class="propel-dump"><strong>"#);
     escape_into(&format!("${} ({kind})", expr.path.join(".")), &mut out);
     out.push_str("</strong>\n");
     escape_into(&json, &mut out);
