@@ -36,7 +36,7 @@ Propel/                           # Rocket clone (git repo, remote: origin = rwf
 
 ## 2. Remotes
 
-- Propel's repo: `origin` is `github.com/lajennylove/propel` (public).
+- Propel's repo: `origin` is `github.com/lajennylove/Propel` (public).
 - The Rocket repo has no remote. Its GitHub repo for the test app is set up by the owner.
 
 ## 3. Architecture decisions (settled)
