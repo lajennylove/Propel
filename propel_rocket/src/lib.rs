@@ -1,7 +1,7 @@
 //! Rocket integration for Propel.
 //!
 //! [`PropelView`] renders a view with `propel_runtime` and responds with the
-//! HTML. Views are read from `views/`, relative to the working directory, on
+//! HTML. Views are read from `resources/views/`, relative to the working directory, on
 //! every request, so template edits show up on the next refresh.
 //!
 //! Release builds are refused on purpose. Production needs the compiled views
@@ -23,8 +23,9 @@ use rocket::request::Request;
 use rocket::response::{self, Responder, Response};
 use serde::Serialize;
 
-/// The directory views are read from, relative to the working directory.
-const VIEWS_DIR: &str = "views";
+/// The directory views are read from, relative to the working directory. As in
+/// Laravel, views live in `resources/views`.
+const VIEWS_DIR: &str = "resources/views";
 
 /// Namespaces registered with [`register_namespace`], shared by every view.
 fn namespaces() -> &'static Mutex<Vec<(String, PathBuf)>> {
@@ -140,7 +141,7 @@ fn hint(error: &RenderError) -> &'static str {
         RenderError::Parse { .. } => "The template has a syntax error. The message points at the line. Check the directive it names, and the @@ escape for a directive word written as text.",
         RenderError::NestedSection { .. } => "A @section must be at the top level of the view. Move it out of the @if or loop, and put the condition inside the section's content.",
         RenderError::AssetNotBuilt { .. } => "The file is not in the build. Run npm run dev while developing, or npm run build before deploying.",
-        RenderError::Load { .. } => "The view file could not be read. Check the view name, and that the views folder exists where the app runs.",
+        RenderError::Load { .. } => "The view file could not be read. Check the view name, and that `resources/views` exists where the app runs.",
         RenderError::LayoutTooDeep { .. } => "A chain of @extends refers back to itself. Check the layout names.",
         RenderError::IncludeTooDeep { .. } => "A chain of @include refers back to itself. Check the partial names.",
         RenderError::Context(_) => "The context could not be converted to a value. Check that its struct derives Serialize.",

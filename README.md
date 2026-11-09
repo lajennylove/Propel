@@ -53,12 +53,12 @@ Propel/                           # Rocket clone (git repo, remote: origin = rwf
 
 Two speeds, both in use:
 
-- **View edits are instant.** In dev builds, `propel_runtime` reads the `.propel` file from disk on every render. Edit a view and refresh. No rebuild.
-- **Rust edits rebuild.** Run `bacon` in `examples/propel/`. It rebuilds and restarts on changes to `src/` and `views/`. The config is `examples/propel/bacon.toml`.
+- **View edits are instant.** In dev builds, `propel_runtime` reads the `.propel` file from disk on every render. Edit a view and refresh. No rebuild and no restart. To have the browser reload itself on save, run `npm run dev` next to the app, which is the Vite dev server (decision 0003 covers where views live).
+- **Rust edits rebuild.** Run `bacon` in `examples/propel/`. It rebuilds and restarts on changes to `src/`. View edits do not need a restart. The config is `examples/propel/bacon.toml`.
 - **Release builds are refused** until `propel_compiler` exists (decision 0001, option B). The runtime renderer is for development only. See "Release builds" below and `docs/production.md`.
 - **Template cache.** In dev builds, `FileLoader` keeps parsed templates in memory. An entry is reused while the file's modification time and size are unchanged. An edit is picked up on the next render, with no restart.
 - **Shared tests (planned).** Template behavior is tested in `propel_runtime/tests/`. When the compiled path exists, the same test cases must pass against both renderers, so the two can't drift.
-- Views are read from `views/` relative to the working directory. Run the app from its own directory.
+- Views are read from `resources/views/` relative to the working directory, as in Laravel. Run the app from its own directory.
 
 ## Assets
 
