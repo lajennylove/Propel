@@ -21,8 +21,9 @@ Propel/                           # Rocket clone (git repo, remote: origin = rwf
     ├── README.md                 # this file
     ├── propel_parser/            # Pest grammar, AST, parser
     ├── propel_runtime/           # dev-mode renderer (reads templates from disk)
-    ├── propel_compiler/          # release-mode code generation (not built yet)
-    ├── propel_macros/            # proc macros (not built yet)
+    ├── propel_compiler/          # templates -> Rust (decision 0004), build helper in build.rs
+    ├── propel_golden/            # golden tests: dev and compiled output must match
+    ├── propel_macros/            # placeholder; the build helper is used instead
     └── propel_rocket/            # PropelView responder
 ```
 
@@ -40,7 +41,7 @@ Propel/                           # Rocket clone (git repo, remote: origin = rwf
 
 ## 3. Architecture decisions (settled)
 
-- **Compile-time views (target, not built yet).** Templates compile to Rust. Structure is checked at `cargo check`. There is no runtime template lookup and no `serde_json::Value` context in release builds. Until `propel_compiler` exists, see "Release builds" below.
+- **Compile-time views (decision [0004](docs/decisions/0004-compiled-views.md)).** Templates compile to Rust. Structure is checked at `cargo check`. There is no runtime template lookup and no `serde_json::Value` context in compiled views. The compiler exists, but release builds are still refused. See "Release builds" below.
 - **The handler builds the context.** Each view has a typed context struct. The handler is responsible for filling every field. Once views compile, a missing field is a compile error in the handler. Today the runtime reports it as an "undefined variable" error when the view renders.
 - **Responder, not an `Engine`.** Propel exposes its own `PropelView` responder rather than plugging into `rocket_dyn_templates`' `Engine` trait. This is plan Gap 1, option (b). The compiled views need typed contexts, which the `Engine` trait's `Serialize` interface does not give us.
 - **Shared data goes through request guards.** Anything a Laravel view composer would provide (current user, nav, flash messages) comes from a Rocket request guard or fairing.
@@ -55,9 +56,9 @@ Two speeds, both in use:
 
 - **View edits are instant.** In dev builds, `propel_runtime` reads the `.propel` file from disk on every render. Edit a view and refresh. No rebuild and no restart. To have the browser reload itself on save, run `npm run dev` next to the app, which is the Vite dev server (decision 0003 covers where views live).
 - **Rust edits rebuild.** Run `bacon` in `examples/propel/`. It rebuilds and restarts on changes to `src/`. View edits do not need a restart. The config is `examples/propel/bacon.toml`.
-- **Release builds are refused** until `propel_compiler` exists (decision 0001, option B). The runtime renderer is for development only. See "Release builds" below and `docs/production.md`.
+- **Release builds are refused** until the owner lifts the gate (decision 0001, option B; the compiler exists, decision 0004). The runtime renderer is for development only. See "Release builds" below and `docs/production.md`.
 - **Template cache.** In dev builds, `FileLoader` keeps parsed templates in memory. An entry is reused while the file's modification time and size are unchanged. An edit is picked up on the next render, with no restart.
-- **Shared tests (planned).** Template behavior is tested in `propel_runtime/tests/`. When the compiled path exists, the same test cases must pass against both renderers, so the two can't drift.
+- **Shared tests.** Template behavior is tested in `propel_runtime/tests/`. The golden cases in `propel_golden` render through both the dev renderer and the compiled views, and both must equal the expected HTML byte for byte, so the two cannot drift. Run them with `cargo test -p propel_golden`.
 - Views are read from `resources/views/` relative to the working directory, as in Laravel. Run the app from its own directory.
 
 ## Assets
@@ -77,8 +78,8 @@ Setup, folder layout, templates, dev and production workflow, and troubleshootin
 
 `cargo build --release` fails on purpose. `propel_rocket` has a `compile_error!` under `cfg(not(debug_assertions))`. The runtime renderer reads templates from disk and uses `serde_json::Value` contexts, and neither belongs in production.
 
-- Production requires the compiled views from `propel_compiler`, which is not built yet.
-- Developers shipping to production: follow [`docs/production.md`](docs/production.md). It lists the steps once the compiler exists.
+- Production will use the compiled views from `propel_compiler`. The compiler exists (decision 0004), but the gate is still on, and it stays on until the owner approves lifting it. `docs/production.md` lists what is left.
+- Developers shipping to production: follow [`docs/production.md`](docs/production.md). It lists the steps that work now and what the gate still needs.
 - The decision and the alternatives are in [`docs/decisions/0001-release-renderer.md`](docs/decisions/0001-release-renderer.md) (option B, accepted).
 
 Already in place, for both builds:
@@ -90,8 +91,8 @@ Already in place, for both builds:
 ## 5. Quality bar
 
 - Match Rocket's style: edition 2021, `rust-version = "1.75"`, `[lints] workspace = true`. Formatting uses `propel/.rustfmt.toml`, because the Rocket root config disables formatting.
-- Every crate with logic has tests. `propel_parser` and `propel_runtime` do. `propel_rocket`, `propel_compiler` and `propel_macros` do not yet.
-- Template behavior is tested with substring assertions on rendered output. Golden-file tests (input template, typed context, expected HTML, compared exactly) are planned.
+- Every crate with logic has tests. `propel_parser`, `propel_runtime` and `propel_compiler` do, and `propel_golden` checks the compiled output. `propel_rocket` and `propel_macros` do not yet.
+- Template behavior is tested with substring assertions on rendered output. Golden-file tests (input template, typed context, expected HTML, compared exactly) live in `propel_golden`. To change an expected file, run `PROPEL_UPDATE_GOLDEN=1 cargo test -p propel_golden`, then read every changed file.
 - Verify before saying something works. Run these in `propel/` and report the actual output:
   - `cargo fmt --all -- --check`
   - `cargo clippy --workspace --all-targets` (must be warning-free for Propel crates)
@@ -132,8 +133,9 @@ Tracked in the vault plan under "Gaps & Open Decisions". Settle them here once d
 - [ ] Escaping rules per type. The runtime escapes `& < > " '` and echoes `null` as nothing.
 - [ ] Crate placement: top-level (as now) or `contrib/propel/`
 - [ ] Template directory convention and file extension (`.propel` used)
-- [x] Release builds: refused until the compiler exists (decision 0001, option B). See `docs/production.md`.
+- [x] Release builds: refused until the gate is lifted (decision 0001, option B). The compiler exists (decision 0004). See `docs/production.md`.
 - [x] Template cache for dev builds (parsed templates, checked by modification time and size). Done.
+- [ ] Null-safe paths in compiled views. `$a.b` with `a` unset renders empty in the dev renderer, but compiled views refuse it (decision 0004, open question 1).
 - [ ] Components and slots (`<x-component>`). Blade compatibility to be reviewed in the Blade comparison.
 - [x] Debug helpers `@dump($expr)` and `@dd($expr)`: development only, rendered in debug builds, output stripped from release (which is refused anyway).
 - [x] `@php` is out of scope: it runs code at render time, which conflicts with the compile-time model.
