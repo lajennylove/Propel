@@ -9,7 +9,7 @@
 //! variable is a render error. The compiled path reports the same mistake at
 //! build time.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::io;
 use std::path::PathBuf;
@@ -77,37 +77,76 @@ fn cache() -> &'static Mutex<HashMap<PathBuf, CachedTemplate>> {
 /// `docs/vite-tailwind.propel`.
 /// Anything else (a leading `/`, `..`, a backslash) is rejected before the
 /// file system is touched, so a name can never point outside `root`.
+///
+/// A namespace is a second root, registered with [`FileLoader::namespace`],
+/// as Laravel's `loadViewsFrom` does for packages. `ignite::layouts.app` reads
+/// `<namespace root>/layouts/app.propel`. The namespace name follows the same
+/// rules as a name segment.
 #[derive(Debug, Clone)]
 pub struct FileLoader {
     root: PathBuf,
+    namespaces: BTreeMap<String, PathBuf>,
 }
 
 impl FileLoader {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            namespaces: BTreeMap::new(),
+        }
+    }
+
+    /// Adds a namespace, so `name::view` reads from `root`.
+    pub fn namespace(mut self, name: impl Into<String>, root: impl Into<PathBuf>) -> Self {
+        self.namespaces.insert(name.into(), root.into());
+        self
     }
 
     fn path(&self, name: &str) -> io::Result<PathBuf> {
-        let valid = name.split('.').all(|segment| {
-            !segment.is_empty()
-                && segment
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        });
+        let (root, view) = match name.split_once("::") {
+            Some((namespace, view)) => {
+                if !valid_segments(namespace) {
+                    return Err(invalid_name(name));
+                }
+                let root = self.namespaces.get(namespace).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("unknown view namespace `{namespace}` in `{name}`"),
+                    )
+                })?;
+                (root, view)
+            }
+            None => (&self.root, name),
+        };
 
-        if !valid {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("invalid template name `{name}`"),
-            ));
+        if !valid_segments(view) {
+            return Err(invalid_name(name));
         }
 
-        let mut path = self.root.clone();
-        for segment in name.split('.') {
+        let mut path = root.clone();
+        for segment in view.split('.') {
             path.push(segment);
         }
         Ok(path.with_extension("propel"))
     }
+}
+
+/// True when every dot-separated part is a non-empty run of letters, digits,
+/// `_` or `-`.
+fn valid_segments(name: &str) -> bool {
+    name.split('.').all(|segment| {
+        !segment.is_empty()
+            && segment
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    })
+}
+
+fn invalid_name(name: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("invalid template name `{name}`"),
+    )
 }
 
 impl Loader for FileLoader {

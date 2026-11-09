@@ -84,6 +84,7 @@ Setup, folder layout, templates, dev and production workflow, and troubleshootin
 Already in place, for both builds:
 
 - Template names are checked before any file is read. Only identifier segments separated by dots are accepted (`FileLoader`).
+- A package's views are registered under a namespace, and referred to as `name::view` (decision [0002](docs/decisions/0002-view-namespaces.md)).
 - Render errors are logged. The response body is a generic `Internal Server Error` in release builds, and the full message only in debug builds.
 
 ## 5. Quality bar

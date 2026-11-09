@@ -14,6 +14,8 @@ compile_error!(
 );
 
 use std::io::Cursor;
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 use propel_runtime::{FileLoader, RenderError};
 use rocket::http::{ContentType, Status};
@@ -23,6 +25,25 @@ use serde::Serialize;
 
 /// The directory views are read from, relative to the working directory.
 const VIEWS_DIR: &str = "views";
+
+/// Namespaces registered with [`register_namespace`], shared by every view.
+fn namespaces() -> &'static Mutex<Vec<(String, PathBuf)>> {
+    static NAMESPACES: OnceLock<Mutex<Vec<(String, PathBuf)>>> = OnceLock::new();
+    NAMESPACES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Makes the views in `root` available as `name::view`, as Laravel's
+/// `loadViewsFrom` does for packages. A package's views can then extend its
+/// own layout: `@extends('ignite::layouts.app')`.
+///
+/// Call it once, before the app serves requests, such as from a fairing's
+/// `on_ignite`. Registering a name again replaces its root.
+pub fn register_namespace(name: impl Into<String>, root: impl Into<PathBuf>) {
+    let (name, root) = (name.into(), root.into());
+    let mut namespaces = namespaces().lock().unwrap_or_else(|e| e.into_inner());
+    namespaces.retain(|(existing, _)| existing != &name);
+    namespaces.push((name, root));
+}
 
 /// A rendered Propel view. Return it from a route.
 ///
@@ -35,9 +56,16 @@ pub struct PropelView {
 }
 
 impl PropelView {
-    /// Renders the view `name` (such as `posts.index`) with `context`.
+    /// Renders the view `name` (such as `posts.index`, or `ignite::index` for a
+    /// registered namespace) with `context`.
     pub fn render<C: Serialize>(name: &str, context: &C) -> Self {
-        let loader = FileLoader::new(VIEWS_DIR);
+        let loader = namespaces()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .fold(FileLoader::new(VIEWS_DIR), |loader, (namespace, root)| {
+                loader.namespace(namespace.clone(), root.clone())
+            });
         PropelView {
             result: propel_runtime::render(&loader, name, context),
         }
@@ -141,5 +169,23 @@ mod tests {
         assert!(page.contains("undefined variable `x` in `&lt;b&gt;page&lt;/b&gt;`"));
         assert!(page.contains("context does not have"));
         assert!(!page.contains("<b>page</b>"));
+    }
+
+    #[test]
+    fn a_registered_namespace_renders_through_render() {
+        #[derive(Serialize)]
+        struct Greeting {
+            name: &'static str,
+        }
+
+        let root = std::env::temp_dir().join(format!("propel-rocket-ns-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("greet.propel"), "Hi {{ $name }}").unwrap();
+
+        register_namespace("rocket_test", &root);
+        let view = PropelView::render("rocket_test::greet", &Greeting { name: "Ada" });
+
+        assert_eq!(view.result.unwrap(), "Hi Ada");
     }
 }
