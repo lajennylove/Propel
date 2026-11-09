@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 propel_parser = { path = "../propel_parser" }
+propel_runtime = { path = "../propel_runtime" }
 
 [lints]
 workspace = true

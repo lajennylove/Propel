@@ -16,6 +16,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
+pub mod support;
+
 use propel_parser::{Branch, Expr, Node, ParseError, Template};
 use serde::Serialize;
 use serde_json::Value;
