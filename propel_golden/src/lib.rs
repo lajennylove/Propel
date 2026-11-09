@@ -1,21 +1,30 @@
 //! The contexts and compiled views of the golden tests. See `tests/golden.rs`.
 
 pub use propel_macros::PropelContext;
+pub use propel_macros::Truthy;
 use propel_runtime::support::Truthy;
 use serde::Serialize;
 
 /// A post. A struct has no text form, so it can be used in a loop and in a
 /// path, but not echoed. It is truthy when present, as an `Option` that is set is.
-#[derive(Serialize)]
+#[derive(Serialize, Truthy)]
 pub struct Post {
     pub title: String,
     pub url: String,
     pub published: Option<String>,
 }
 
-impl Truthy for Post {
+/// A hand-written rule, instead of the derive: a draft is truthy when it has
+/// text. The dev renderer cannot run this rule, because it sees only JSON, so
+/// the `draft` view is checked on the compiled side alone.
+#[derive(Serialize)]
+pub struct Draft {
+    pub body: String,
+}
+
+impl Truthy for Draft {
     fn truthy(&self) -> bool {
-        true
+        !self.body.is_empty()
     }
 }
 
@@ -58,6 +67,7 @@ pub struct Basics {
     pub posts: Vec<Post>,
     pub archived: Option<Vec<Post>>,
     pub latest: Option<Post>,
+    pub draft: Draft,
 }
 
 impl Basics {
@@ -84,6 +94,9 @@ impl Basics {
             posts: vec![post("First post"), post("Second post")],
             archived: Some(vec![post("Old post")]),
             latest: Some(post("First post")),
+            draft: Draft {
+                body: "unfinished".into(),
+            },
         }
     }
 
@@ -105,6 +118,9 @@ impl Basics {
             posts: Vec::new(),
             archived: None,
             latest: None,
+            draft: Draft {
+                body: String::new(),
+            },
         }
     }
 }

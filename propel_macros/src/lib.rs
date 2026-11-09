@@ -3,6 +3,10 @@
 //! - `#[derive(PropelContext)]` checks a context struct against the views that
 //!   use it. A template that reads a field the struct does not have fails the
 //!   build, with the template file and line in the message.
+//! - `#[derive(Truthy)]` makes a type truthy in `@if`. Every value of the type
+//!   is true, as a PHP or Blade object is. `None` and an empty list stay false,
+//!   because the `Option` and `Vec` impls say so. A type that needs another
+//!   rule writes `impl Truthy` by hand, and does not derive it.
 //! - `views!` compiles one view from a directory into the current module. It
 //!   is for tests, and for an app that does not use a `build.rs`.
 
@@ -233,6 +237,30 @@ fn field_names(input: &DeriveInput) -> syn::Result<Vec<String>> {
         .collect())
 }
 
+/// Makes every value of a type truthy in `@if`. See the crate docs.
+///
+/// ```ignore
+/// #[derive(Serialize, Truthy)]
+/// pub struct Post { pub title: String }
+/// ```
+#[proc_macro_derive(Truthy)]
+pub fn derive_truthy(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    expand_truthy(&input).into()
+}
+
+fn expand_truthy(input: &DeriveInput) -> TokenStream2 {
+    let name = &input.ident;
+    let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
+    quote::quote! {
+        impl #impl_generics ::propel_runtime::support::Truthy for #name #type_generics #where_clause {
+            fn truthy(&self) -> bool {
+                true
+            }
+        }
+    }
+}
+
 /// Compiles one view from a directory into the current module.
 ///
 /// ```ignore
@@ -353,6 +381,19 @@ mod tests {
 
         assert!(
             code.contains("not_iterable.propel:2:18: `$title` cannot be looped over"),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn the_truthy_derive_makes_every_value_true() {
+        let input: DeriveInput = syn::parse_str("pub struct Post<T> { pub title: T }").unwrap();
+
+        let code = expand_truthy(&input).to_string();
+
+        assert!(code.contains("Truthy for Post < T >"), "{code}");
+        assert!(
+            code.contains("fn truthy (& self) -> bool { true }"),
             "{code}"
         );
     }

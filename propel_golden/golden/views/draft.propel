@@ -1,0 +1,3 @@
+@if ($draft)
+draft: {{ $draft.body }}
+@endif
