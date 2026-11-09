@@ -1,2 +1,5 @@
 /target
 Cargo.lock
+
+# Internal notes (kept locally, not in the repository)
+/docs/

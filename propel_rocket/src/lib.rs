@@ -11,7 +11,7 @@
 //!   edits show up on the next refresh. A release build has no such path, so
 //!   it cannot read view files at run time.
 //!
-//! See `docs/production.md` and decision 0004.
+//! See https://propel.rocketboost.rs/docs for the release steps.
 
 use std::io::Cursor;
 use std::path::PathBuf;
