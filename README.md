@@ -23,7 +23,7 @@ Propel/                           # Rocket clone (git repo, remote: origin = rwf
     ├── propel_runtime/           # dev-mode renderer (reads templates from disk)
     ├── propel_compiler/          # templates -> Rust (decision 0004), build helper in build.rs
     ├── propel_golden/            # golden tests: dev and compiled output must match
-    ├── propel_macros/            # placeholder; the build helper is used instead
+    ├── propel_macros/            # #[derive(PropelContext)] and views!, checks against templates
     └── propel_rocket/            # PropelView responder
 ```
 
@@ -41,7 +41,7 @@ Propel/                           # Rocket clone (git repo, remote: origin = rwf
 
 ## 3. Architecture decisions (settled)
 
-- **Compile-time views (decision [0004](docs/decisions/0004-compiled-views.md)).** Templates compile to Rust. Structure is checked at `cargo check`. There is no runtime template lookup and no `serde_json::Value` context in compiled views. The compiler exists, but release builds are still refused. See "Release builds" below.
+- **Compile-time views (decision [0004](docs/decisions/0004-compiled-views.md)).** Templates compile to Rust. Structure is checked at `cargo check`. A type error names the template file, line and column, and so does a missing field, through `#[derive(PropelContext)]`. There is no runtime template lookup and no `serde_json::Value` context in compiled views. The compiler exists, but release builds are still refused. See "Release builds" below.
 - **The handler builds the context.** Each view has a typed context struct. The handler is responsible for filling every field. Once views compile, a missing field is a compile error in the handler. Today the runtime reports it as an "undefined variable" error when the view renders.
 - **Responder, not an `Engine`.** Propel exposes its own `PropelView` responder rather than plugging into `rocket_dyn_templates`' `Engine` trait. This is plan Gap 1, option (b). The compiled views need typed contexts, which the `Engine` trait's `Serialize` interface does not give us.
 - **Shared data goes through request guards.** Anything a Laravel view composer would provide (current user, nav, flash messages) comes from a Rocket request guard or fairing.
