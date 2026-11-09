@@ -80,8 +80,20 @@ pub struct PropelView {
 }
 
 impl PropelView {
+    /// A response for a compiled view: the result of its `render` function,
+    /// such as `posts::index::render(&ctx, &assets)`. It responds in the same way
+    /// as [`PropelView::render`], and it works in release builds.
+    pub fn from_result(result: Result<String, RenderError>) -> Self {
+        PropelView { result }
+    }
+
     /// Renders the view `name` (such as `posts.index`, or `ignite::index` for a
-    /// registered namespace) with `context`.
+    /// registered namespace) with `context`, through the dev interpreter.
+    ///
+    /// The interpreter reads view files on every call, so this exists only in
+    /// debug builds. A release build renders with a compiled view and
+    /// [`PropelView::from_result`].
+    #[cfg(debug_assertions)]
     pub fn render<C: Serialize>(name: &str, context: &C) -> Self {
         let loader = namespaces()
             .lock()
@@ -189,6 +201,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn from_result_keeps_the_html() {
+        let view = PropelView::from_result(Ok("<p>hi</p>".into()));
+
+        assert_eq!(view.result.unwrap(), "<p>hi</p>");
+    }
+
+    #[test]
+    fn from_result_keeps_the_error() {
+        let error = RenderError::Undefined {
+            template: "posts.index".into(),
+            path: "title".into(),
+        };
+        let view = PropelView::from_result(Err(error));
+
+        assert!(view
+            .result
+            .unwrap_err()
+            .to_string()
+            .contains("undefined variable"));
+    }
+
+    #[test]
     fn error_page_escapes_the_message_and_gives_a_hint() {
         let error = RenderError::Undefined {
             template: "<b>page</b>".into(),
@@ -201,6 +235,7 @@ mod tests {
         assert!(!page.contains("<b>page</b>"));
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn a_registered_namespace_renders_through_render() {
         #[derive(Serialize)]
