@@ -1,0 +1,12 @@
+<main>
+@section('sidebar')
+default sidebar
+@show
+@yield('content')
+@hasSection('footer')
+<footer>@yield('footer')</footer>
+@endif
+@sectionMissing('nav')
+no nav
+@endif
+</main>

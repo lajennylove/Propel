@@ -1,0 +1,7 @@
+{{-- a comment that never renders --}}
+@@foreach and @@if are text
+me@example.com and @media screen
+@{{ literal braces }} and @{!! raw !!}
+<script>var o = @{{ a: 1 }};</script>
+{{ $raw_html }}
+{!! $raw_html !!}

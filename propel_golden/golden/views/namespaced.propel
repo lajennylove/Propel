@@ -1,0 +1,5 @@
+@extends('ui::layouts.app')
+@section('content')
+@include('ui::partials.badge')
+<p>{{ $count }}</p>
+@endsection

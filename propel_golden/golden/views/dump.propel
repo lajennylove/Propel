@@ -1,0 +1,4 @@
+<p>before</p>
+@dump($count)
+@dump($posts)
+<p>after</p>

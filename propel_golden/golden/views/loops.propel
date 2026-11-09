@@ -1,0 +1,21 @@
+@foreach (tag in $tags)
+<li>{{ tag }}</li>
+@endforeach
+@foreach (tag in $maybe_tags)
+<li>{{ tag }}</li>
+@endforeach
+@forelse (post in $posts)
+<h2>{{ post.title }}</h2>
+<a href="{{ post.url }}">{{ post.published }}</a>
+@empty
+<p>No posts.</p>
+@endforelse
+@forelse (post in $archived)
+<h3>{{ post.title }}</h3>
+@foreach (post in $posts)
+<i>{{ post.title }}</i>
+@endforeach
+@endforelse
+@forelse (post in $maybe_tags)
+never
+@endforelse

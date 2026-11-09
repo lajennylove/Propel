@@ -1,0 +1,4 @@
+<div>
+@include('partials.note')
+@include('ui::partials.badge')
+</div>

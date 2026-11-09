@@ -1,0 +1,13 @@
+@extends('layouts.app')
+@push('head')
+<meta name="a">
+@endpush
+@prepend('head')
+<meta name="first">
+@endprepend
+@push('scripts')
+<script>one</script>
+@endpush
+@section('content')
+@include('partials.note')
+@endsection

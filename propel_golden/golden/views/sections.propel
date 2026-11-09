@@ -1,0 +1,10 @@
+@extends('layouts.wrapper')
+@section('sidebar')
+child sidebar, above: @parent
+@endsection
+@section('content')
+<p>content {{ $title }}</p>
+@endsection
+@section('footer')
+bye
+@endsection

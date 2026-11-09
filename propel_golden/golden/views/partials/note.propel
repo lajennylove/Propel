@@ -1,0 +1,4 @@
+@push('scripts')
+<script>from partial</script>
+@endpush
+<p>note {{ $title }}</p>

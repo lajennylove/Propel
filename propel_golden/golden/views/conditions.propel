@@ -1,0 +1,24 @@
+@if ($flag)
+flag on
+@elseif ($count)
+count {{ $count }}
+@else
+nothing
+@endif
+@if ($nothing)
+never
+@endif
+@if ($subtitle)
+subtitle {{ $subtitle }}
+@endif
+@if ($empty)
+never
+@else
+empty text is false
+@endif
+@if ($latest)
+latest is set
+@endif
+@if ($posts)
+has posts
+@endif

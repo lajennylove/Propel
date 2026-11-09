@@ -1,0 +1,11 @@
+<!doctype html>
+<html>
+<head>
+<title>@yield('title', 'Untitled') · {{ $title }}</title>
+@stack('head')
+</head>
+<body>
+@yield('content')
+@stack('scripts')
+</body>
+</html>

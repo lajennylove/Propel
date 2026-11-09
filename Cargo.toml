@@ -6,6 +6,7 @@ members = [
   "propel_runtime/",
   "propel_macros/",
   "propel_rocket/",
+  "propel_golden/",
 ]
 
 [workspace.lints.rust]

@@ -1,0 +1,9 @@
+@extends('layouts.wrapper')
+@section('content')
+inside
+@dd($count)
+never
+@endsection
+@section('footer')
+footer {{ $title }}
+@endsection

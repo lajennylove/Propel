@@ -1,0 +1,21 @@
+[package]
+name = "propel_golden"
+version = "0.1.0"
+description = """
+Golden tests for Propel: each case renders through the dev renderer and the
+compiled views, and both must match the expected HTML byte for byte.
+"""
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.75"
+publish = false
+
+[dependencies]
+propel_runtime = { path = "../propel_runtime" }
+serde = { version = "1", features = ["derive"] }
+
+[build-dependencies]
+propel_compiler = { path = "../propel_compiler" }
+
+[lints]
+workspace = true

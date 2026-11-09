@@ -1,0 +1,6 @@
+<p>{{ $title }}</p>
+<p>{!! $raw_html !!}</p>
+<a href="{{ $url }}">link</a>
+<a href="{{ $unsafe_url }}">unsafe</a>
+<a href="{!! $unsafe_url !!}">raw unsafe</a>
+<p>{{ $count }} {{ $ratio }} {{ $flag }} [{{ $nothing }}] [{{ $subtitle }}] [{{ $empty }}]</p>
