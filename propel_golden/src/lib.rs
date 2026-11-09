@@ -2,7 +2,8 @@
 
 pub use propel_macros::PropelContext;
 pub use propel_macros::Truthy;
-use propel_runtime::support::Truthy;
+use std::collections::HashMap;
+
 use serde::Serialize;
 
 /// A post. A struct has no text form, so it can be used in a loop and in a
@@ -14,19 +15,17 @@ pub struct Post {
     pub published: Option<String>,
 }
 
-/// A hand-written rule, instead of the derive: a draft is truthy when it has
-/// text. The dev renderer cannot run this rule, because it sees only JSON, so
-/// the `draft` view is checked on the compiled side alone.
+/// A draft. A rule that depends on its text is a field test in the template,
+/// `@if ($draft.body)`, which both renderers run the same way.
 #[derive(Serialize)]
 pub struct Draft {
     pub body: String,
 }
 
-impl Truthy for Draft {
-    fn truthy(&self) -> bool {
-        !self.body.is_empty()
-    }
-}
+/// A struct with no fields. It serializes to `{}`, which is an object, so it
+/// is true in both renderers.
+#[derive(Serialize, Truthy)]
+pub struct Marker {}
 
 /// The context shared by the golden views. The fields cover every kind of
 /// value the templates use: text, numbers, booleans, options, lists and structs.
@@ -68,6 +67,8 @@ pub struct Basics {
     pub archived: Option<Vec<Post>>,
     pub latest: Option<Post>,
     pub draft: Draft,
+    pub marker: Option<Marker>,
+    pub map: Option<HashMap<String, String>>,
 }
 
 impl Basics {
@@ -97,6 +98,8 @@ impl Basics {
             draft: Draft {
                 body: "unfinished".into(),
             },
+            marker: Some(Marker {}),
+            map: Some(HashMap::new()),
         }
     }
 
@@ -121,6 +124,8 @@ impl Basics {
             draft: Draft {
                 body: String::new(),
             },
+            marker: None,
+            map: None,
         }
     }
 }

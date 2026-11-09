@@ -87,7 +87,7 @@ Already in place, for both builds:
 - A package's views are registered under a namespace, and referred to as `name::view` (decision [0002](docs/decisions/0002-view-namespaces.md)).
 - Render errors are logged. The response body is a generic `Internal Server Error` in release builds, and the full message only in debug builds.
 - A path that reads a field of a null value is an error in both renderers (`RenderError::NullValue`). `@if` guards it. A null at the end of a path renders as empty.
-- `#[derive(Truthy)]` makes a struct truthy in `@if`. `None` and an empty list stay false.
+- `#[derive(Truthy)]` makes a struct truthy in `@if`. Every object is true, including an empty one, and `None` and an empty list stay false. A rule that depends on data is a field test in the template.
 
 ## 5. Quality bar
 

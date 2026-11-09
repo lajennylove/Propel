@@ -76,8 +76,10 @@ impl<T: Printable> Printable for Option<T> {
 }
 
 /// Truthiness for `@if`. `false`, zero, an empty string or list, and `None`
-/// are false. A struct has no truthiness unless the app implements this trait
-/// for it, for example as `true`.
+/// are false. Every object is true, so a struct is true: `#[derive(Truthy)]`
+/// gives that. A hand-written impl is not supported. The dev renderer reads
+/// JSON and cannot run it, so the two renderers would differ. Test a field in
+/// the template instead, for example `@if ($draft.body)`.
 pub trait Truthy {
     fn truthy(&self) -> bool;
 }
@@ -138,6 +140,21 @@ impl<T: Truthy> Truthy for Option<T> {
 impl<T> Truthy for Vec<T> {
     fn truthy(&self) -> bool {
         !self.is_empty()
+    }
+}
+
+/// A map is an object, and every object is true (see the dev renderer). An
+/// empty map is therefore true too. To make an empty map false, use
+/// `Option<HashMap<..>>` and set it to `None`.
+impl<K, V, S> Truthy for std::collections::HashMap<K, V, S> {
+    fn truthy(&self) -> bool {
+        true
+    }
+}
+
+impl<K, V> Truthy for std::collections::BTreeMap<K, V> {
+    fn truthy(&self) -> bool {
+        true
     }
 }
 

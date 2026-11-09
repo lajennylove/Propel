@@ -837,8 +837,10 @@ fn nested_section(template: &str, section: &str) -> RenderError {
     }
 }
 
-/// Truthiness for `@if`. `null`, `false`, zero, and empty strings, lists,
-/// and objects are false, the same as a `None` or empty collection in Rust.
+/// Truthiness for `@if`, as in PHP and Laravel: `null`, `false`, zero, an empty
+/// string and an empty list are false. Every object is true, even one with no
+/// fields, so a struct with no fields is true. An optional map is `None` when
+/// it should be false.
 fn truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
@@ -846,7 +848,7 @@ fn truthy(value: &Value) -> bool {
         Value::Number(number) => number.as_f64().is_some_and(|n| n != 0.0),
         Value::String(text) => !text.is_empty(),
         Value::Array(items) => !items.is_empty(),
-        Value::Object(map) => !map.is_empty(),
+        Value::Object(_) => true,
     }
 }
 

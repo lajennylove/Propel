@@ -79,6 +79,8 @@ golden!(includes_full, "includes", full, includes);
 golden!(namespaced_full, "namespaced", full, namespaced);
 golden!(assets_full, "assets", full, assets);
 golden!(nullpath_full, "nullpath", full, nullpath);
+golden!(draft_full, "draft", full, draft);
+golden!(draft_empty, "draft", empty, draft);
 golden!(nullpath_empty, "nullpath", empty, nullpath);
 
 #[cfg(debug_assertions)]
@@ -102,18 +104,4 @@ fn a_null_parent_is_an_error_in_both_renderers() {
         dev.to_string(),
         "`latest.title` in `nullpath_bare` reads a field of a value that is null"
     );
-}
-
-/// A hand-written `Truthy` is run only by compiled views. The dev renderer
-/// sees the context as JSON, where a non-empty object is true, so the two
-/// differ here, and the golden files are not shared for this view.
-#[test]
-fn a_hand_written_truthy_is_used_by_compiled_views() {
-    let mut context = Basics::empty();
-    let blank = propel_golden::draft::render(&context, &assets()).expect("renders");
-    assert_eq!(blank, "\n");
-
-    context.draft.body = "half written".into();
-    let written = propel_golden::draft::render(&context, &assets()).expect("renders");
-    assert_eq!(written, "\ndraft: half written\n\n");
 }

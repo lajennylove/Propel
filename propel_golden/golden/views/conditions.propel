@@ -22,3 +22,9 @@ latest is set
 @if ($posts)
 has posts
 @endif
+@if ($marker)
+marker set
+@endif
+@if ($map)
+map set
+@endif
