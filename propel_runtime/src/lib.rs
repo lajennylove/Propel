@@ -42,6 +42,17 @@ pub trait Loader {
     }
 }
 
+/// A shared loader is a loader, so one loader can serve several namespaces.
+impl<L: Loader + ?Sized> Loader for std::sync::Arc<L> {
+    fn source(&self, name: &str) -> io::Result<String> {
+        (**self).source(name)
+    }
+
+    fn template(&self, name: &str) -> Result<Arc<Template>, RenderError> {
+        (**self).template(name)
+    }
+}
+
 fn parse_named(name: &str, source: &str) -> Result<Arc<Template>, RenderError> {
     propel_parser::parse(source)
         .map(Arc::new)
@@ -84,10 +95,32 @@ fn cache() -> &'static Mutex<HashMap<PathBuf, CachedTemplate>> {
 /// as Laravel's `loadViewsFrom` does for packages. `ignite::layouts.app` reads
 /// `<namespace root>/layouts/app.propel`. The namespace name follows the same
 /// rules as a name segment.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FileLoader {
     root: PathBuf,
-    namespaces: BTreeMap<String, PathBuf>,
+    namespaces: BTreeMap<String, Namespace>,
+}
+
+/// Where a namespace's templates come from: a directory, or another loader.
+#[derive(Clone)]
+enum Namespace {
+    Path(PathBuf),
+    Loader(Arc<dyn Loader + Send + Sync>),
+}
+
+/// What a template name resolves to: a file to read, or a view for another loader.
+enum Resolved<'a> {
+    File(PathBuf),
+    Loader(&'a Arc<dyn Loader + Send + Sync>, &'a str),
+}
+
+impl std::fmt::Debug for FileLoader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileLoader")
+            .field("root", &self.root)
+            .field("namespaces", &self.namespaces.keys().collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 impl FileLoader {
@@ -100,37 +133,61 @@ impl FileLoader {
 
     /// Adds a namespace, so `name::view` reads from `root`.
     pub fn namespace(mut self, name: impl Into<String>, root: impl Into<PathBuf>) -> Self {
-        self.namespaces.insert(name.into(), root.into());
+        self.namespaces
+            .insert(name.into(), Namespace::Path(root.into()));
         self
     }
 
-    fn path(&self, name: &str) -> io::Result<PathBuf> {
-        let (root, view) = match name.split_once("::") {
+    /// Adds a namespace served by another loader, so `name::view` asks `loader`
+    /// for `view`. The loader decides where the source comes from, which lets
+    /// a package ship its templates inside its binary. Use this instead of
+    /// [`FileLoader::namespace`] when the templates are not files.
+    pub fn namespace_loader(
+        mut self,
+        name: impl Into<String>,
+        loader: impl Loader + Send + Sync + 'static,
+    ) -> Self {
+        self.namespaces
+            .insert(name.into(), Namespace::Loader(Arc::new(loader)));
+        self
+    }
+
+    fn resolve<'a>(&'a self, name: &'a str) -> io::Result<Resolved<'a>> {
+        let (namespace, view) = match name.split_once("::") {
             Some((namespace, view)) => {
                 if !valid_segments(namespace) {
                     return Err(invalid_name(name));
                 }
-                let root = self.namespaces.get(namespace).ok_or_else(|| {
+                let found = self.namespaces.get(namespace).ok_or_else(|| {
                     io::Error::new(
                         io::ErrorKind::NotFound,
                         format!("unknown view namespace `{namespace}` in `{name}`"),
                     )
                 })?;
-                (root, view)
+                (Some(found), view)
             }
-            None => (&self.root, name),
+            None => (None, name),
         };
 
         if !valid_segments(view) {
             return Err(invalid_name(name));
         }
 
-        let mut path = root.clone();
-        for segment in view.split('.') {
-            path.push(segment);
+        match namespace {
+            Some(Namespace::Loader(loader)) => Ok(Resolved::Loader(loader, view)),
+            Some(Namespace::Path(root)) => Ok(Resolved::File(view_path(root, view))),
+            None => Ok(Resolved::File(view_path(&self.root, view))),
         }
-        Ok(path.with_extension("propel"))
     }
+}
+
+/// The file for `view` under `root`: dots are directory separators.
+fn view_path(root: &std::path::Path, view: &str) -> PathBuf {
+    let mut path = root.to_path_buf();
+    for segment in view.split('.') {
+        path.push(segment);
+    }
+    path.with_extension("propel")
 }
 
 /// True when every dot-separated part is a non-empty run of letters, digits,
@@ -153,7 +210,10 @@ fn invalid_name(name: &str) -> io::Error {
 
 impl Loader for FileLoader {
     fn source(&self, name: &str) -> io::Result<String> {
-        std::fs::read_to_string(self.path(name)?)
+        match self.resolve(name)? {
+            Resolved::File(path) => std::fs::read_to_string(path),
+            Resolved::Loader(loader, view) => loader.source(view),
+        }
     }
 
     fn template(&self, name: &str) -> Result<Arc<Template>, RenderError> {
@@ -162,7 +222,10 @@ impl Loader for FileLoader {
             source,
         };
 
-        let path = self.path(name).map_err(load)?;
+        let path = match self.resolve(name).map_err(load)? {
+            Resolved::File(path) => path,
+            Resolved::Loader(loader, view) => return loader.template(view),
+        };
         let meta = std::fs::metadata(&path).map_err(load)?;
         let (modified, len) = (meta.modified().map_err(load)?, meta.len());
 

@@ -15,9 +15,9 @@ compile_error!(
 
 use std::io::Cursor;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use propel_runtime::{FileLoader, RenderError};
+use propel_runtime::{FileLoader, Loader, RenderError};
 use rocket::http::{ContentType, Status};
 use rocket::request::Request;
 use rocket::response::{self, Responder, Response};
@@ -27,10 +27,24 @@ use serde::Serialize;
 /// Laravel, views live in `resources/views`.
 const VIEWS_DIR: &str = "resources/views";
 
-/// Namespaces registered with [`register_namespace`], shared by every view.
-fn namespaces() -> &'static Mutex<Vec<(String, PathBuf)>> {
-    static NAMESPACES: OnceLock<Mutex<Vec<(String, PathBuf)>>> = OnceLock::new();
+/// Where a registered namespace's views come from.
+#[derive(Clone)]
+enum Source {
+    Path(PathBuf),
+    Loader(Arc<dyn Loader + Send + Sync>),
+}
+
+/// Namespaces registered with [`register_namespace`] or
+/// [`register_namespace_loader`], shared by every view.
+fn namespaces() -> &'static Mutex<Vec<(String, Source)>> {
+    static NAMESPACES: OnceLock<Mutex<Vec<(String, Source)>>> = OnceLock::new();
     NAMESPACES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn add_namespace(name: String, source: Source) {
+    let mut namespaces = namespaces().lock().unwrap_or_else(|e| e.into_inner());
+    namespaces.retain(|(existing, _)| existing != &name);
+    namespaces.push((name, source));
 }
 
 /// Makes the views in `root` available as `name::view`, as Laravel's
@@ -40,10 +54,19 @@ fn namespaces() -> &'static Mutex<Vec<(String, PathBuf)>> {
 /// Call it once, before the app serves requests, such as from a fairing's
 /// `on_ignite`. Registering a name again replaces its root.
 pub fn register_namespace(name: impl Into<String>, root: impl Into<PathBuf>) {
-    let (name, root) = (name.into(), root.into());
-    let mut namespaces = namespaces().lock().unwrap_or_else(|e| e.into_inner());
-    namespaces.retain(|(existing, _)| existing != &name);
-    namespaces.push((name, root));
+    add_namespace(name.into(), Source::Path(root.into()));
+}
+
+/// Makes the views that `loader` serves available as `name::view`. Use it when
+/// the views are not files, such as templates compiled into a binary: the
+/// loader is asked for `view` (for example `layouts.app`) and returns its
+/// source. A package registers this in its fairing, so its views ship with it.
+/// Registering a name again replaces it, as [`register_namespace`] does.
+pub fn register_namespace_loader(
+    name: impl Into<String>,
+    loader: impl Loader + Send + Sync + 'static,
+) {
+    add_namespace(name.into(), Source::Loader(Arc::new(loader)));
 }
 
 /// A rendered Propel view. Return it from a route.
@@ -64,9 +87,15 @@ impl PropelView {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .iter()
-            .fold(FileLoader::new(VIEWS_DIR), |loader, (namespace, root)| {
-                loader.namespace(namespace.clone(), root.clone())
-            });
+            .fold(
+                FileLoader::new(VIEWS_DIR),
+                |loader, (namespace, source)| match source {
+                    Source::Path(root) => loader.namespace(namespace.clone(), root.clone()),
+                    Source::Loader(shared) => {
+                        loader.namespace_loader(namespace.clone(), Arc::clone(shared))
+                    }
+                },
+            );
         PropelView {
             result: propel_runtime::render(&loader, name, context),
         }
