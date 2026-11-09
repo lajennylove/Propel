@@ -1,0 +1,6 @@
+ --> tests/ui/not_iterable.rs:7:1
+  |
+7 | views!(root = "tests/ui/views", view = "not_iterable", context = crate::Ctx);
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `views` (in Nightly builds, run with -Z macro-backtrace for more info)

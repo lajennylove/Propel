@@ -1,0 +1,5 @@
+<ul>
+@foreach (tag in $title)
+<li>{{ tag }}</li>
+@endforeach
+</ul>

@@ -9,6 +9,9 @@
 
 pub mod build;
 mod codegen;
+mod references;
+
+pub use references::{references, Reference};
 
 use std::fmt;
 
@@ -19,6 +22,12 @@ use propel_parser::Template;
 pub trait Templates {
     /// The parsed template for `name`, or a message that says why it could not be read.
     fn template(&self, name: &str) -> Result<Template, String>;
+
+    /// The file a template is read from, for error messages. A name without a
+    /// file of its own gets `<name>.propel`.
+    fn path(&self, name: &str) -> String {
+        format!("{name}.propel")
+    }
 }
 
 /// A view that cannot be compiled. It names the template where the problem
@@ -102,8 +111,15 @@ mod tests {
         let code = compile(&map(&[("a", "{{ $title }} {{ $post.title }}")]), "a").unwrap();
 
         assert!(code.contains("pub fn render(ctx: &crate::Ctx"));
-        assert!(code.contains("Printable::text(&ctx.title)"));
-        assert!(code.contains("Printable::text(&ctx.post.title)"));
+        assert!(code.contains("__site1(&ctx.title)"));
+        assert!(code.contains("__site2(&ctx.post.title)"));
+    }
+
+    #[test]
+    fn a_wrong_type_names_the_template_line_and_column() {
+        let code = compile(&map(&[("a", "line one\n  {{ $posts }}")]), "a").unwrap();
+
+        assert!(code.contains("message = \"a.propel:2:6: `$posts` cannot be printed in an echo"));
     }
 
     #[test]
@@ -130,7 +146,7 @@ mod tests {
         .unwrap();
 
         assert!(code.contains("for v_title in __items.iter()"));
-        assert!(code.contains("Printable::text(&v_title)"));
+        assert!(code.contains("(&v_title)"));
     }
 
     #[test]

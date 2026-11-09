@@ -7,12 +7,16 @@ compiled views, and both must match the expected HTML byte for byte.
 """
 license = "MIT OR Apache-2.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.78"
 publish = false
 
 [dependencies]
+propel_macros = { path = "../propel_macros" }
 propel_runtime = { path = "../propel_runtime" }
 serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+trybuild = "1"
 
 [build-dependencies]
 propel_compiler = { path = "../propel_compiler" }

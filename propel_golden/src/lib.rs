@@ -1,5 +1,6 @@
 //! The contexts and compiled views of the golden tests. See `tests/golden.rs`.
 
+pub use propel_macros::PropelContext;
 use propel_runtime::support::Truthy;
 use serde::Serialize;
 
@@ -20,7 +21,27 @@ impl Truthy for Post {
 
 /// The context shared by the golden views. The fields cover every kind of
 /// value the templates use: text, numbers, booleans, options, lists and structs.
-#[derive(Serialize)]
+/// Every view that reads `Basics`. The derive checks each field a view reads
+/// while the crate compiles.
+#[derive(Serialize, PropelContext)]
+#[propel(
+    root = "golden/views",
+    namespace("ui", "golden/packages/ui"),
+    views(
+        "echo",
+        "conditions",
+        "loops",
+        "escaping",
+        "layout",
+        "sections",
+        "stacks",
+        "includes",
+        "namespaced",
+        "assets",
+        "dump",
+        "halt"
+    )
+)]
 pub struct Basics {
     pub title: String,
     pub raw_html: String,

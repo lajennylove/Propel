@@ -56,13 +56,14 @@ pub(crate) fn render_fn(
         stacks: HashMap::new(),
         include_depth: 0,
         stack_depth: 0,
+        sites: 0,
     };
     gen.page(entry)?;
 
     let rt = &options.runtime_path;
     let ctx = &options.context_type;
     Ok(format!(
-        "#[allow(unused_mut, unused_variables, unused_labels, unreachable_code, clippy::all)]\n\
+        "#[allow(unused_mut, unused_variables, unused_labels, unreachable_code, non_camel_case_types, non_snake_case, clippy::all)]\n\
          pub fn render(ctx: &{ctx}, assets: &{rt}::Assets) -> Result<::std::string::String, {rt}::RenderError> {{\n\
          let _ = (ctx, assets);\n\
          let mut out = ::std::string::String::new();\n\
@@ -94,6 +95,20 @@ struct Gen<'a> {
     stacks: HashMap<String, Vec<Vec<Node>>>,
     include_depth: usize,
     stack_depth: usize,
+    /// The number of type-check sites so far, so each has a unique name.
+    sites: usize,
+}
+
+/// What a use site needs from its value. Each kind has its own trait, so a
+/// wrong type fails with a message that names the template position.
+#[derive(Clone, Copy)]
+enum Site {
+    /// `{{ }}` and `{!! !!}`: the value must have text.
+    Echo,
+    /// `@if` and `@elseif`: the value must have truthiness.
+    Condition,
+    /// `@foreach` and `@forelse`: the value must be a list.
+    Items,
 }
 
 impl Gen<'_> {
@@ -113,6 +128,61 @@ impl Gen<'_> {
     fn emit(&mut self, line: &str) {
         self.code.push_str(line);
         self.code.push('\n');
+    }
+
+    /// Emits a trait that the value's type must implement for `kind`, with a
+    /// message that names the template, line and column of `expr`. Returns the
+    /// name of the checking function and the Rust place of the value.
+    fn site(&mut self, kind: Site, expr: &Expr) -> Result<(String, String), CompileError> {
+        let place = self.place(expr)?;
+        self.sites += 1;
+        let number = self.sites;
+        let rt = self.options.runtime_path.clone();
+        let location = format!(
+            "{}:{}:{}",
+            self.templates.path(&self.template),
+            expr.line,
+            expr.column
+        );
+        let dotted = expr.path.join(".");
+
+        let (message, note, supertrait, returns, body) = match kind {
+            Site::Echo => (
+                format!("{location}: `${dotted}` cannot be printed in an echo, because it has no text form"),
+                "print a text, number or boolean field instead, or implement Printable for the type",
+                format!("{rt}::support::Printable"),
+                "::std::string::String".to_owned(),
+                format!("{rt}::support::Printable::text(value)"),
+            ),
+            Site::Condition => (
+                format!("{location}: `${dotted}` cannot be the condition of @if, because its type has no truthiness"),
+                "use a bool, or implement Truthy for the type (true for a struct)",
+                format!("{rt}::support::Truthy"),
+                "bool".to_owned(),
+                format!("{rt}::support::Truthy::truthy(value)"),
+            ),
+            Site::Items => (
+                format!("{location}: `${dotted}` cannot be looped over, because it is not a list"),
+                "use a Vec, or an Option of a Vec",
+                format!("{rt}::support::Items"),
+                format!("&'a [<T as {rt}::support::Items>::Item]"),
+                format!("{rt}::support::Items::items(value)"),
+            ),
+        };
+
+        let name = format!("__Site{number}");
+        let func = format!("__site{number}");
+        self.emit(&format!(
+            "#[diagnostic::on_unimplemented(message = {}, note = {})]",
+            literal(&message),
+            literal(note)
+        ));
+        self.emit(&format!("trait {name}: {supertrait} {{}}"));
+        self.emit(&format!("impl<T: {supertrait} + ?Sized> {name} for T {{}}"));
+        self.emit(&format!(
+            "fn {func}<'a, T: {name} + ?Sized>(value: &'a T) -> {returns} {{ {body} }}"
+        ));
+        Ok((func, place))
     }
 
     fn new_label(&mut self) -> String {
@@ -248,9 +318,9 @@ impl Gen<'_> {
                 raw,
                 url_attribute,
             } => {
-                let place = self.place(expr)?;
+                let (func, place) = self.site(Site::Echo, expr)?;
                 self.emit(&format!(
-                    "{{ let __t = {rt}::support::Printable::text(&{place}); \
+                    "{{ let __t = {func}(&{place}); \
                      {rt}::support::echo(&mut out, &__t, {raw}, {url_attribute}); }}"
                 ));
             }
@@ -284,11 +354,9 @@ impl Gen<'_> {
                 body,
                 empty,
             } => {
-                let collection = self.place(collection)?;
+                let (func, collection) = self.site(Site::Items, collection)?;
                 self.emit("{");
-                self.emit(&format!(
-                    "let __items = {rt}::support::Items::items(&{collection});"
-                ));
+                self.emit(&format!("let __items = {func}(&{collection});"));
                 if let Some(empty) = empty.as_ref().filter(|nodes| !nodes.is_empty()) {
                     self.emit("if __items.is_empty() {");
                     self.nodes(empty)?;
@@ -370,13 +438,16 @@ impl Gen<'_> {
         branches: &[Branch],
         otherwise: Option<&[Node]>,
     ) -> Result<(), CompileError> {
-        let rt = self.options.runtime_path.clone();
-        for (index, Branch { condition, body }) in branches.iter().enumerate() {
-            let place = self.place(condition)?;
+        // Every condition's trait is emitted before the chain, since an `else if`
+        // cannot hold an item.
+        let mut checks = Vec::new();
+        for Branch { condition, .. } in branches {
+            checks.push(self.site(Site::Condition, condition)?);
+        }
+        for (index, (Branch { body, .. }, (func, place))) in branches.iter().zip(checks).enumerate()
+        {
             let keyword = if index == 0 { "if" } else { "} else if" };
-            self.emit(&format!(
-                "{keyword} {rt}::support::Truthy::truthy(&{place}) {{"
-            ));
+            self.emit(&format!("{keyword} {func}(&{place}) {{"));
             self.nodes(body)?;
         }
         if let Some(otherwise) = otherwise {

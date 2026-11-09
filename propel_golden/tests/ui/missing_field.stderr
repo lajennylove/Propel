@@ -1,0 +1,4 @@
+ --> tests/ui/missing_field.rs:6:12
+  |
+6 | pub struct Ctx {
+  |            ^^^

@@ -85,7 +85,19 @@ pub struct Branch {
 }
 
 /// A variable path such as `title` or `post.title`, without the leading `$`.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// `line` and `column` are where the path starts in the template, both from 1.
+/// They are for error messages. Two paths are equal when their names are equal,
+/// whatever their positions.
+#[derive(Debug, Clone, Default)]
 pub struct Expr {
     pub path: Vec<String>,
+    pub line: usize,
+    pub column: usize,
+}
+
+impl PartialEq for Expr {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+    }
 }

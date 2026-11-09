@@ -248,6 +248,7 @@ fn body(pair: Pair<'_, Rule>) -> Vec<Node> {
 }
 
 fn expr(pair: Pair<'_, Rule>) -> Expr {
+    let (line, column) = pair.as_span().start_pos().line_col();
     let path = pair
         .as_str()
         .trim_start_matches('$')
@@ -255,7 +256,7 @@ fn expr(pair: Pair<'_, Rule>) -> Expr {
         .map(str::to_owned)
         .collect();
 
-    Expr { path }
+    Expr { path, line, column }
 }
 
 /// Strips the quotes from a `string` pair.
@@ -286,7 +287,8 @@ mod tests {
                 Node::Text("Hi ".into()),
                 Node::Echo {
                     expr: Expr {
-                        path: vec!["name".into()]
+                        path: vec!["name".into()],
+                        ..Default::default()
                     },
                     raw: false,
                     url_attribute: false,
@@ -294,7 +296,8 @@ mod tests {
                 Node::Text(", ".into()),
                 Node::Echo {
                     expr: Expr {
-                        path: vec!["html".into()]
+                        path: vec!["html".into()],
+                        ..Default::default()
                     },
                     raw: true,
                     url_attribute: false,
@@ -311,6 +314,7 @@ mod tests {
             vec![Node::Echo {
                 expr: Expr {
                     path: vec!["post".into(), "author".into(), "name".into()],
+                    ..Default::default()
                 },
                 raw: false,
                 url_attribute: false,
@@ -364,7 +368,8 @@ mod tests {
             nodes("@dump($post.title)"),
             vec![Node::Dump {
                 expr: Expr {
-                    path: vec!["post".into(), "title".into()]
+                    path: vec!["post".into(), "title".into()],
+                    ..Default::default()
                 },
                 halt: false,
             }]
@@ -373,7 +378,8 @@ mod tests {
             nodes("@dd($x)"),
             vec![Node::Dump {
                 expr: Expr {
-                    path: vec!["x".into()]
+                    path: vec!["x".into()],
+                    ..Default::default()
                 },
                 halt: true,
             }]

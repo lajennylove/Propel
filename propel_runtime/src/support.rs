@@ -195,6 +195,7 @@ pub fn dump<T: Serialize + ?Sized>(
     let value = serde_json::to_value(value).map_err(RenderError::Context)?;
     let expr = Expr {
         path: path.split('.').map(str::to_owned).collect(),
+        ..Expr::default()
     };
     out.push_str(&crate::dump_html(&expr, &value));
     Ok(())

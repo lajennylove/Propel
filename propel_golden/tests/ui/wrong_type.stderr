@@ -1,0 +1,6 @@
+ --> tests/ui/wrong_type.rs:8:1
+  |
+8 | views!(root = "tests/ui/views", view = "wrong_type", context = crate::Ctx);
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `views` (in Nightly builds, run with -Z macro-backtrace for more info)
