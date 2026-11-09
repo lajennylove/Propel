@@ -65,6 +65,8 @@ pub(crate) fn render_fn(
     Ok(format!(
         "#[allow(unused_mut, unused_variables, unused_labels, unreachable_code, non_camel_case_types, non_snake_case, clippy::all)]\n\
          pub fn render(ctx: &{ctx}, assets: &{rt}::Assets) -> Result<::std::string::String, {rt}::RenderError> {{\n\
+         #[allow(unused_imports)]\n\
+         use {rt}::support::{{NullableProbe as _, PlainProbe as _}};\n\
          let _ = (ctx, assets);\n\
          let mut out = ::std::string::String::new();\n\
          {body}\
@@ -516,9 +518,18 @@ impl Gen<'_> {
         } else {
             format!("ctx.{}", self.field(root)?)
         };
+        // Each `.field` reads a field of the value before it, which may be null.
+        // The probe returns that value, or a RenderError::NullValue that names
+        // the whole path, which is what the interpreter reports.
+        let rt = &self.options.runtime_path;
+        let whole = literal(&expr.path.join("."));
+        let template = literal(&self.template);
         for segment in rest {
-            place.push('.');
-            place.push_str(&self.field(segment)?);
+            let field = self.field(segment)?;
+            place = format!(
+                "({rt}::support::Probe(&{place}).resolve().map_err(|_: {rt}::support::Null| \
+                 {rt}::RenderError::NullValue {{ template: {template}.to_owned(), path: {whole}.to_owned() }})?).{field}"
+            );
         }
         Ok(place)
     }

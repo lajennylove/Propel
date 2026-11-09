@@ -183,6 +183,7 @@ pre {{ background: #f6f7f9; padding: 1rem; white-space: pre-wrap; font-size: 14p
 fn hint(error: &RenderError) -> &'static str {
     match error {
         RenderError::Undefined { .. } => "The view uses a variable that the handler's context does not have. Add the field to the context struct and set it in the handler, or correct the name in the view.",
+        RenderError::NullValue { .. } => "A path reads a field of a value that is not set, such as an Option that is None. Check the value with @if first, or read a field that is always set.",
         RenderError::NotIterable { .. } => "A loop expects a list. Check that the field is a Vec, or an Option of one, in the context.",
         RenderError::NotPrintable { .. } => "The value is a list or an object, which has no text form. Print one of its fields instead.",
         RenderError::Parse { .. } => "The template has a syntax error. The message points at the line. Check the directive it names, and the @@ escape for a directive word written as text.",

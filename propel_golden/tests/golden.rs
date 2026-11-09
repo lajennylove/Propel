@@ -78,8 +78,28 @@ golden!(stacks_full, "stacks", full, stacks);
 golden!(includes_full, "includes", full, includes);
 golden!(namespaced_full, "namespaced", full, namespaced);
 golden!(assets_full, "assets", full, assets);
+golden!(nullpath_full, "nullpath", full, nullpath);
+golden!(nullpath_empty, "nullpath", empty, nullpath);
 
 #[cfg(debug_assertions)]
 golden!(dump_full, "dump", full, dump);
 #[cfg(debug_assertions)]
 golden!(halt_full, "halt", full, halt);
+
+/// A path that reads a field of a null value fails in both renderers, with the
+/// same message. A `@if` guard avoids it.
+#[test]
+fn a_null_parent_is_an_error_in_both_renderers() {
+    let context = Basics::empty();
+
+    let dev = render_with_assets(&loader(), &assets(), "nullpath_bare", &context)
+        .expect_err("the dev renderer reads a field of null");
+    let compiled = propel_golden::nullpath_bare::render(&context, &assets())
+        .expect_err("the compiled view reads a field of null");
+
+    assert_eq!(dev.to_string(), compiled.to_string());
+    assert_eq!(
+        dev.to_string(),
+        "`latest.title` in `nullpath_bare` reads a field of a value that is null"
+    );
+}

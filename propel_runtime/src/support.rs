@@ -200,3 +200,47 @@ pub fn dump<T: Serialize + ?Sized>(
     out.push_str(&crate::dump_html(&expr, &value));
     Ok(())
 }
+
+/// The error of a probe: the value is null.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Null;
+
+/// The first step of a path whose value might be null. Generated code calls
+/// `Probe(&value).resolve()` before each `.field` that follows an optional
+/// value, and maps [`Null`] to `RenderError::NullValue`.
+///
+/// Two traits give the same method name for two cases. Rust tries the by-value
+/// receiver first, so an `Option` takes [`NullableProbe`], and any other type
+/// falls through to [`PlainProbe`]. Both traits must be in scope where the
+/// method is called.
+pub struct Probe<'a, X: ?Sized>(pub &'a X);
+
+/// The value of an `Option`: `Err` when it is `None`.
+pub trait NullableProbe<'a> {
+    type Inner: ?Sized + 'a;
+
+    fn resolve(self) -> Result<&'a Self::Inner, Null>;
+}
+
+impl<'a, T> NullableProbe<'a> for Probe<'a, Option<T>> {
+    type Inner = T;
+
+    fn resolve(self) -> Result<&'a T, Null> {
+        self.0.as_ref().ok_or(Null)
+    }
+}
+
+/// Any other value: it is its own value.
+pub trait PlainProbe<'a> {
+    type Inner: ?Sized + 'a;
+
+    fn resolve(&self) -> Result<&'a Self::Inner, Null>;
+}
+
+impl<'a, X: ?Sized> PlainProbe<'a> for Probe<'a, X> {
+    type Inner = X;
+
+    fn resolve(&self) -> Result<&'a X, Null> {
+        Ok(self.0)
+    }
+}

@@ -263,6 +263,9 @@ pub enum RenderError {
     },
     /// A variable in the template is not in the context.
     Undefined { template: String, path: String },
+    /// A path reads a field of a value that is null, such as `$post.author.name`
+    /// when `author` is not set. `path` is the whole path.
+    NullValue { template: String, path: String },
     /// A `@foreach` or `@forelse` collection is not a list.
     NotIterable { template: String, path: String },
     /// An echoed value is a list or an object, which has no text form.
@@ -290,6 +293,12 @@ impl fmt::Display for RenderError {
             }
             RenderError::Undefined { template, path } => {
                 write!(f, "undefined variable `{path}` in `{template}`")
+            }
+            RenderError::NullValue { template, path } => {
+                write!(
+                    f,
+                    "`{path}` in `{template}` reads a field of a value that is null"
+                )
             }
             RenderError::NotIterable { template, path } => {
                 write!(f, "`{path}` in `{template}` is not a list")
@@ -728,11 +737,14 @@ impl<L: Loader> Renderer<'_, L> {
             .ok_or_else(undefined)?;
 
         for segment in rest {
-            // A null parent makes the whole path null, so an optional
-            // relation that is not set renders as empty. A key that is
-            // missing from an object is still an error.
+            // Reading a field of null is an error, as in Blade. A null leaf
+            // still renders as empty, and a key missing from an object is an
+            // error too.
             if value.is_null() {
-                return Ok(Value::Null);
+                return Err(RenderError::NullValue {
+                    template: self.template.clone(),
+                    path: expr.path.join("."),
+                });
             }
             value = value.get(segment).ok_or_else(undefined)?;
         }

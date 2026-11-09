@@ -112,7 +112,7 @@ mod tests {
 
         assert!(code.contains("pub fn render(ctx: &crate::Ctx"));
         assert!(code.contains("__site1(&ctx.title)"));
-        assert!(code.contains("__site2(&ctx.post.title)"));
+        assert!(code.contains("__site2(&(") && code.contains("Probe(&ctx.post)"));
     }
 
     #[test]

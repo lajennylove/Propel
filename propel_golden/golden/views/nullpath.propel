@@ -1,0 +1,4 @@
+@if ($latest)
+<p>latest: {{ $latest.title }}</p>
+<a href="{{ $latest.url }}">open</a>
+@endif

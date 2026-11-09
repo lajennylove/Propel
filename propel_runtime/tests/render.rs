@@ -211,11 +211,15 @@ fn render_inline<C: Serialize>(
 }
 
 #[test]
-fn null_parent_renders_as_empty() {
+fn null_parent_is_an_error() {
     let context = serde_json::json!({ "post": { "author": null } });
 
-    let html = render_inline("null_parent", "[{{ $post.author.name }}]", &context).unwrap();
-    assert_eq!(html, "[]");
+    // Reading a field of null fails, as in Blade. See null_paths.rs.
+    let error = render_inline("null_parent", "[{{ $post.author.name }}]", &context)
+        .expect_err("a field of null is an error");
+    assert!(error
+        .to_string()
+        .contains("reads a field of a value that is null"));
 }
 
 #[test]

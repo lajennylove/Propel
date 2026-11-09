@@ -13,5 +13,7 @@ fn main() {
         .view("assets", "crate::Basics")
         .view("dump", "crate::Basics")
         .view("halt", "crate::Basics")
+        .view("nullpath", "crate::Basics")
+        .view("nullpath_bare", "crate::Basics")
         .build();
 }
