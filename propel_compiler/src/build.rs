@@ -316,3 +316,19 @@ impl Tree {
         }
     }
 }
+
+#[cfg(test)]
+mod namespace_check {
+    #[test]
+    fn a_missing_namespace_line_fails_and_names_the_namespace() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../propel_golden/golden/views");
+        let error = super::Views::new(root)
+            .view("namespaced", "crate::Basics")
+            .generate()
+            .expect_err("the namespace is not registered");
+        assert!(
+            error.to_string().contains("unknown view namespace `ui`"),
+            "{error}"
+        );
+    }
+}
