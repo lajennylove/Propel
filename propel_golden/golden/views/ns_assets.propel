@@ -1,0 +1,2 @@
+@vite(['ui::resources/css/app.css'])
+<img src="{{ asset('ui::resources/images/badge.svg') }}">

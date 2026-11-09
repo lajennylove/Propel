@@ -42,6 +42,7 @@ pub struct Views {
     entries: Vec<(String, String)>,
     runtime_path: Option<String>,
     base: Option<PathBuf>,
+    asset_namespaces: Vec<String>,
 }
 
 impl Views {
@@ -75,6 +76,15 @@ impl Views {
         self
     }
 
+    /// An asset namespace the views use, such as `ignite`. A view that names an
+    /// asset in it (`ignite::resources/css/app.css`) fails the build unless the
+    /// namespace is declared here. Its source is given at run time, with
+    /// `Assets::namespace`.
+    pub fn asset_namespace(mut self, name: impl Into<String>) -> Self {
+        self.asset_namespaces.push(name.into());
+        self
+    }
+
     /// The path to `propel_runtime` in the generated code, when the app does
     /// not depend on it directly. The default is `::propel_runtime`.
     pub fn runtime_path(mut self, path: impl Into<String>) -> Self {
@@ -104,6 +114,7 @@ impl Views {
             if let Some(runtime) = &self.runtime_path {
                 options.runtime_path = runtime.clone();
             }
+            options.asset_namespaces = self.asset_namespaces.clone();
             let function = generate(&templates, view, &options)?;
             let path = module_path(view).map_err(|message| CompileError {
                 template: view.clone(),

@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use propel_golden::Basics;
-use propel_runtime::{render_with_assets, Assets, FileLoader, RenderError};
+use propel_runtime::{render_with_assets, AssetSource, Assets, FileLoader, RenderError};
 
 fn golden_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden")
@@ -23,6 +23,27 @@ fn loader() -> FileLoader {
 
 fn assets() -> Assets {
     Assets::new(golden_dir().join("public"))
+}
+
+/// The `ui` package's built files, compiled in as a memory source, served
+/// under a package-specific prefix. The golden `ns_assets` view uses them.
+const UI_MANIFEST: &str = include_str!("../golden/packages/ui/build/manifest.json");
+static UI_FILES: &[(&str, &[u8])] = &[
+    (
+        "assets/ui-1a2b.css",
+        include_bytes!("../golden/packages/ui/build/assets/ui-1a2b.css"),
+    ),
+    (
+        "resources/images/badge.svg",
+        include_bytes!("../golden/packages/ui/build/resources/images/badge.svg"),
+    ),
+];
+
+fn assets_with_package() -> Assets {
+    assets().namespace(
+        "ui",
+        AssetSource::memory(UI_MANIFEST, UI_FILES).url_prefix("/admin/build"),
+    )
 }
 
 /// Renders `view` through the dev renderer and `compiled`, then compares both
@@ -80,6 +101,7 @@ golden!(namespaced_full, "namespaced", full, namespaced);
 golden!(assets_full, "assets", full, assets);
 golden!(nullpath_full, "nullpath", full, nullpath);
 golden!(draft_full, "draft", full, draft);
+
 golden!(draft_empty, "draft", empty, draft);
 golden!(nullpath_empty, "nullpath", empty, nullpath);
 
@@ -103,5 +125,18 @@ fn a_null_parent_is_an_error_in_both_renderers() {
     assert_eq!(
         dev.to_string(),
         "`latest.title` in `nullpath_bare` reads a field of a value that is null"
+    );
+}
+
+/// A view that uses a package's assets by namespace renders the same in both
+/// renderers. The package's files come from memory, with their own prefix.
+#[test]
+fn a_namespaced_asset_renders_the_same_in_both_renderers() {
+    let context = Basics::full();
+    check(
+        "ns_assets",
+        "full",
+        render_with_assets(&loader(), &assets_with_package(), "ns_assets", &context),
+        propel_golden::ns_assets::render(&context, &assets_with_package()),
     );
 }

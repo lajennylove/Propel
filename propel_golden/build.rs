@@ -1,6 +1,7 @@
 fn main() {
     propel_compiler::build::Views::new("golden/views")
         .namespace("ui", "golden/packages/ui")
+        .asset_namespace("ui")
         .view("echo", "crate::Basics")
         .view("conditions", "crate::Basics")
         .view("loops", "crate::Basics")
@@ -14,6 +15,7 @@ fn main() {
         .view("dump", "crate::Basics")
         .view("halt", "crate::Basics")
         .view("draft", "crate::Basics")
+        .view("ns_assets", "crate::Basics")
         .view("nullpath", "crate::Basics")
         .view("nullpath_bare", "crate::Basics")
         .build();

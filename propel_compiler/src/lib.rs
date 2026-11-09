@@ -56,6 +56,10 @@ pub struct Options {
     /// The path to `propel_runtime` in the generated code. The default works
     /// when the app depends on `propel_runtime` directly.
     pub runtime_path: String,
+    /// The asset namespaces the app declares, such as `ignite`. A namespaced
+    /// `asset()` or `@vite()` must name one of them, or the build fails. The
+    /// app gives each namespace's source at run time, with `Assets::namespace`.
+    pub asset_namespaces: Vec<String>,
 }
 
 impl Options {
@@ -64,6 +68,7 @@ impl Options {
         Self {
             context_type: context_type.into(),
             runtime_path: "::propel_runtime".into(),
+            asset_namespaces: Vec::new(),
         }
     }
 }
@@ -215,6 +220,32 @@ mod tests {
 
         assert!(code.contains("if ::core::cfg!(debug_assertions)"));
         assert!(code.contains("break 'f1;"));
+    }
+
+    #[test]
+    fn an_undeclared_asset_namespace_fails_the_build() {
+        let templates = map(&[("a", "@vite('ghost::resources/css/app.css')")]);
+
+        let error = generate(&templates, "a", &Options::new("crate::Ctx")).unwrap_err();
+
+        assert!(
+            error
+                .message
+                .contains("asset namespace `ghost` is not declared"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_declared_asset_namespace_compiles() {
+        let templates = map(&[(
+            "a",
+            "<img src=\"{{ asset('ui::resources/images/x.svg') }}\">",
+        )]);
+        let mut options = Options::new("crate::Ctx");
+        options.asset_namespaces.push("ui".into());
+
+        assert!(generate(&templates, "a", &options).is_ok());
     }
 
     #[test]

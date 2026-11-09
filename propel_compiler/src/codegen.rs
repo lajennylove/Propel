@@ -327,6 +327,7 @@ impl Gen<'_> {
                 ));
             }
             Node::Asset { path, raw, .. } => {
+                self.check_asset_namespace(path)?;
                 let error = self.not_built(path);
                 self.emit(&format!(
                     "{{ let __u = assets.url({}).ok_or_else(|| {error})?; \
@@ -335,6 +336,9 @@ impl Gen<'_> {
                 ));
             }
             Node::Vite { entries } => {
+                for entry in entries {
+                    self.check_asset_namespace(entry)?;
+                }
                 let list: Vec<String> = entries
                     .iter()
                     .map(|entry| format!("{}.to_owned()", literal(entry)))
@@ -494,6 +498,26 @@ impl Gen<'_> {
         let result = self.fragment(name, |gen| gen.nodes(&template.nodes));
         self.include_depth -= 1;
         result
+    }
+
+    /// A name such as `ignite::resources/css/app.css` must use a namespace the
+    /// app declared. Otherwise the view would fail at run time, so the build
+    /// fails instead.
+    fn check_asset_namespace(&self, name: &str) -> Result<(), CompileError> {
+        let Some((namespace, _)) = name.split_once("::") else {
+            return Ok(());
+        };
+        if self
+            .options
+            .asset_namespaces
+            .iter()
+            .any(|declared| declared == namespace)
+        {
+            return Ok(());
+        }
+        Err(self.error(format!(
+            "asset namespace `{namespace}` is not declared: add `.asset_namespace(\"{namespace}\")` to the views in build.rs"
+        )))
     }
 
     fn not_built(&self, path: &str) -> String {
