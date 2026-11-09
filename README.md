@@ -65,7 +65,7 @@ Two speeds, both in use:
 
 Templates can use `{{ asset('resources/images/x.svg') }}` and `@vite(['resources/css/app.css', 'resources/js/app.js'])`. `propel_runtime::Assets` resolves them with the same convention as Laravel's Vite plugin: `public/hot` (the dev server, while it runs) first, then `public/build/manifest.json`. A file in neither place is an error that names the file. Details and setup are in `examples/propel/README.md`.
 
-A package's assets are a namespace, as its views are: `@vite('ignite::resources/css/app.css')` resolves through the `ignite` source, which is a directory or files compiled into the binary, with its own hot file and URL prefix. The app declares the namespace in `build.rs` (`.asset_namespace`) and gives its source at run time (`Assets::namespace`). Decision [0005](docs/decisions/0005-asset-namespaces.md).
+A package's assets are a namespace, as its views are: `@vite('ignite::resources/css/app.css')` resolves through the `ignite` source, which is a directory or files compiled into the binary, with its own hot file and URL prefix. A package registers its namespace process-wide with `propel_rocket::register_asset_namespace(name, source, url_prefix)`, and the app's own build is the default source (`public`). `PropelView::compiled(|assets| render(&ctx, assets))` gives a compiled view the assets. The build still needs `.asset_namespace` in the `build.rs` of the views that name a namespace. Decisions [0005](docs/decisions/0005-asset-namespaces.md) and [0006](docs/decisions/0006-global-asset-namespaces.md).
 
 Setup, folder layout, templates, dev and production workflow, and troubleshooting: see [`docs/assets.md`](docs/assets.md).
 

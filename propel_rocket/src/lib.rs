@@ -18,8 +18,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 #[cfg(debug_assertions)]
-use propel_runtime::FileLoader;
-use propel_runtime::{Loader, RenderError};
+use propel_runtime::{render_with_assets, FileLoader};
+use propel_runtime::{AssetSource, Assets, Loader, RenderError};
 use rocket::http::{ContentType, Status};
 use rocket::request::Request;
 use rocket::response::{self, Responder, Response};
@@ -75,6 +75,49 @@ pub fn register_namespace_loader(
     add_namespace(name.into(), Source::Loader(Arc::new(loader)));
 }
 
+/// The directory the app's own built assets are read from, relative to the
+/// working directory, as Laravel's `public` is.
+const PUBLIC_DIR: &str = "public";
+
+/// Asset namespaces registered with [`register_asset_namespace`], shared by
+/// every response, with the URL prefix each one is served under.
+fn asset_namespaces() -> &'static Mutex<Vec<(String, AssetSource)>> {
+    static ASSET_NAMESPACES: OnceLock<Mutex<Vec<(String, AssetSource)>>> = OnceLock::new();
+    ASSET_NAMESPACES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Makes a package's built assets available as `name::path`, as views are
+/// with [`register_namespace`]. The source is a directory, or files compiled
+/// into the binary (see [`AssetSource`]). `url_prefix` is where its built files
+/// are served, such as `/admin/build`.
+///
+/// A package calls this itself, from its fairing or on start-up, so an app
+/// needs no line for it. The registry is process-wide, as the view namespaces
+/// are: two packages that pick the same name share it, and the last
+/// registration wins. Pick a name that is unique to the package.
+///
+/// Call it before the app serves requests.
+pub fn register_asset_namespace(name: impl Into<String>, source: AssetSource, url_prefix: &str) {
+    let name = name.into();
+    let source = source.url_prefix(url_prefix);
+    let mut namespaces = asset_namespaces().lock().unwrap_or_else(|e| e.into_inner());
+    namespaces.retain(|(existing, _)| existing != &name);
+    namespaces.push((name, source));
+}
+
+/// The assets the app serves: its own `public` directory, which is the
+/// default, and every namespace registered with [`register_asset_namespace`].
+/// The development renderer and [`PropelView::compiled`] both use these.
+pub fn global_assets() -> Assets {
+    asset_namespaces()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .fold(Assets::new(PUBLIC_DIR), |assets, (name, source)| {
+            assets.namespace(name.clone(), source.clone())
+        })
+}
+
 /// A rendered Propel view. Return it from a route.
 ///
 /// Rendering happens in [`PropelView::render`], so the handler can see the
@@ -91,6 +134,24 @@ impl PropelView {
     /// as [`PropelView::render`], and it works in release builds.
     pub fn from_result(result: Result<String, RenderError>) -> Self {
         PropelView { result }
+    }
+
+    /// A response from a compiled view, with the app's assets. Pass a closure
+    /// that calls the view's generated `render` function:
+    ///
+    /// ```ignore
+    /// PropelView::compiled(|assets| posts::index::render(&context, assets))
+    /// ```
+    ///
+    /// The closure gets [`global_assets`], so a handler needs no `Assets` of its
+    /// own. It works in release builds, as [`PropelView::from_result`] does.
+    pub fn compiled<F>(render: F) -> Self
+    where
+        F: FnOnce(&Assets) -> Result<String, RenderError>,
+    {
+        PropelView {
+            result: render(&global_assets()),
+        }
     }
 
     /// Renders the view `name` (such as `posts.index`, or `ignite::index` for a
@@ -115,7 +176,7 @@ impl PropelView {
                 },
             );
         PropelView {
-            result: propel_runtime::render(&loader, name, context),
+            result: render_with_assets(&loader, &global_assets(), name, context),
         }
     }
 }
@@ -205,6 +266,7 @@ fn escape(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use propel_runtime::AssetSource;
     use rocket::local::blocking::Client;
     use rocket::routes;
 
@@ -283,6 +345,140 @@ mod tests {
         assert!(page.contains("undefined variable `x` in `&lt;b&gt;page&lt;/b&gt;`"));
         assert!(page.contains("context does not have"));
         assert!(!page.contains("<b>page</b>"));
+    }
+
+    /// A fresh directory under the system temp dir, unique to `test`.
+    fn scratch(test: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("propel-rocket-{test}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("build/assets")).unwrap();
+        dir
+    }
+
+    const PANEL_MANIFEST: &str = r#"{
+      "resources/css/app.css": { "file": "assets/panel-1.css", "isEntry": true }
+    }"#;
+
+    #[test]
+    fn a_registered_asset_namespace_resolves_with_its_prefix() {
+        let dir = scratch("assets_resolve");
+        std::fs::write(dir.join("build/manifest.json"), PANEL_MANIFEST).unwrap();
+
+        register_asset_namespace(
+            "panel_resolve",
+            AssetSource::directory(&dir),
+            "/admin/build",
+        );
+        let assets = global_assets();
+
+        assert_eq!(
+            assets
+                .url("panel_resolve::resources/css/app.css")
+                .as_deref(),
+            Some("/admin/build/assets/panel-1.css")
+        );
+    }
+
+    #[test]
+    fn a_compiled_view_gets_the_registered_namespace() {
+        let dir = scratch("assets_compiled");
+        std::fs::write(dir.join("build/manifest.json"), PANEL_MANIFEST).unwrap();
+        register_asset_namespace(
+            "panel_compiled",
+            AssetSource::directory(&dir),
+            "/admin/build",
+        );
+
+        // A generated `render` function gets the same assets; this closure stands in for it.
+        let view = PropelView::compiled(|assets| {
+            assets
+                .tags(&["panel_compiled::resources/css/app.css".into()])
+                .ok_or_else(|| RenderError::AssetNotBuilt {
+                    template: "panel".into(),
+                    path: "panel_compiled::resources/css/app.css".into(),
+                })
+        });
+
+        assert_eq!(
+            view.result.unwrap(),
+            "<link rel=\"stylesheet\" href=\"/admin/build/assets/panel-1.css\">\n"
+        );
+    }
+
+    #[test]
+    fn an_unregistered_namespace_has_no_assets() {
+        let view = PropelView::compiled(|assets| {
+            assets
+                .url("never_registered::resources/images/logo.svg")
+                .ok_or_else(|| RenderError::AssetNotBuilt {
+                    template: "page".into(),
+                    path: "never_registered::resources/images/logo.svg".into(),
+                })
+        });
+
+        let error = view.result.expect_err("the namespace was never registered");
+        assert!(error
+            .to_string()
+            .contains("never_registered::resources/images/logo.svg"));
+    }
+
+    #[test]
+    fn the_default_source_is_the_public_directory() {
+        // The default is `public`, relative to the working directory. A name
+        // with no namespace resolves there, and this test directory has no
+        // built files, so the answer is none. A registered namespace still works next to it.
+        assert_eq!(global_assets().url("resources/images/missing.svg"), None);
+    }
+
+    #[test]
+    fn a_registration_under_the_same_name_replaces_the_first() {
+        let first = scratch("assets_replace_first");
+        std::fs::write(first.join("build/manifest.json"), PANEL_MANIFEST).unwrap();
+        let second = scratch("assets_replace_second");
+        std::fs::write(
+            second.join("build/manifest.json"),
+            r#"{ "resources/css/app.css": { "file": "assets/second-2.css", "isEntry": true } }"#,
+        )
+        .unwrap();
+
+        register_asset_namespace("panel_replace", AssetSource::directory(&first), "/a");
+        register_asset_namespace("panel_replace", AssetSource::directory(&second), "/b");
+
+        assert_eq!(
+            global_assets()
+                .url("panel_replace::resources/css/app.css")
+                .as_deref(),
+            Some("/b/assets/second-2.css")
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_registered_asset_namespace_renders_through_the_dev_renderer() {
+        #[derive(Serialize)]
+        struct Empty {}
+
+        let dir = scratch("assets_dev_render");
+        std::fs::write(dir.join("build/manifest.json"), PANEL_MANIFEST).unwrap();
+        std::fs::write(dir.join("hot"), "http://localhost:5199").unwrap();
+        register_asset_namespace("panel_dev", AssetSource::directory(&dir), "/admin/build");
+
+        let views = scratch("assets_dev_views");
+        std::fs::write(
+            views.join("page.propel"),
+            "@vite('panel_dev::resources/css/app.css')",
+        )
+        .unwrap();
+        register_namespace("panel_dev_views", &views);
+
+        let view = PropelView::render("panel_dev_views::page", &Empty {});
+
+        // The namespace's own dev server wins, even though its URL prefix differs.
+        assert_eq!(
+            view.result.unwrap(),
+            "<script type=\"module\" src=\"http://localhost:5199/@vite/client\"></script>\n\
+             <link rel=\"stylesheet\" href=\"http://localhost:5199/resources/css/app.css\">\n"
+        );
     }
 
     #[cfg(debug_assertions)]
