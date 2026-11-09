@@ -27,7 +27,7 @@ Propel/                           # Rocket clone (git repo, remote: origin = rwf
     └── propel_rocket/            # PropelView responder
 ```
 
-- The root repo is Rocket's. Keep it clean of Propel code. The test app in `examples/propel/` is the exception, because it exists to exercise Propel.
+- This repo holds the library only. The docs app that exercises Propel lives in the `RocketPropel` repository.
 - Everything under `propel/` belongs to the Propel repo. Run Propel commands from inside `propel/`.
 - Rocket's crates are **upstream code**. Don't edit them for Propel work. If Propel needs a change in Rocket, raise it as an upstream issue or PR.
 - Propel's crates depend on Rocket by git revision (`3a54d079`), so this repo builds on its own. When Rocket 0.6 ships on crates.io, switch to that version.
@@ -55,7 +55,7 @@ Propel/                           # Rocket clone (git repo, remote: origin = rwf
 Two speeds, both in use:
 
 - **View edits are instant.** In dev builds, `propel_runtime` reads the `.propel` file from disk on every render. Edit a view and refresh. No rebuild and no restart. To have the browser reload itself on save, run `npm run dev` next to the app, which is the Vite dev server (decision 0003 covers where views live).
-- **Rust edits rebuild.** Run `bacon` in `examples/propel/`. It rebuilds and restarts on changes to `src/`. View edits do not need a restart. The config is `examples/propel/bacon.toml`.
+- **Rust edits rebuild.** Run `bacon` in the `RocketPropel` repository. It rebuilds and restarts on changes to `src/`. View edits do not need a restart. The config is `examples/propel/bacon.toml`.
 - **Release builds render compiled views only.** `PropelView::render`, the interpreter, is compiled in debug builds only. A view reaches a response through `PropelView::from_result`. The gate is lifted (decision 0004). See "Release builds" below and `docs/production.md`.
 - **Template cache.** In dev builds, `FileLoader` keeps parsed templates in memory. An entry is reused while the file's modification time and size are unchanged. An edit is picked up on the next render, with no restart.
 - **Shared tests.** Template behavior is tested in `propel_runtime/tests/`. The golden cases in `propel_golden` render through both the dev renderer and the compiled views, and both must equal the expected HTML byte for byte, so the two cannot drift. Run them with `cargo test -p propel_golden`.
@@ -112,7 +112,7 @@ These tools are installed on the development machine. Anyone else setting up Pro
 | --- | --- | --- |
 | `cargo` (Homebrew) | Builds the workspaces | `brew install rust` |
 | `rustup` + `clippy` | Lints. Homebrew's Rust has no clippy | `brew install rustup`, then `rustup default stable` and `rustup component add clippy rustfmt` |
-| `bacon` | Rebuild-on-save for `examples/propel` | `brew install bacon` |
+| `bacon` | Rebuild-on-save for the `RocketPropel` docs app | `brew install bacon` |
 
 Homebrew's `cargo` is first on the PATH and has no clippy. Run the rustup tools from `~/.cargo/bin`, for example `~/.cargo/bin/cargo clippy`. To make rustup's tools the default, add this to `~/.zshrc`:
 
