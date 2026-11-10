@@ -189,7 +189,7 @@ impl<'r> Responder<'r, 'static> for PropelView {
                 .sized_body(html.len(), Cursor::new(html))
                 .ok(),
             Err(error) => {
-                rocket::trace::error!("propel: {error}");
+                rocket::error!("propel: {error}");
 
                 // Debug builds explain the error in a page. Release builds say
                 // nothing about the templates.

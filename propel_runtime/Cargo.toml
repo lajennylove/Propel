@@ -1,17 +1,20 @@
 [package]
 name = "propel_runtime"
-version = "0.1.0"
+version = "0.2.0"
 description = """
 Dev-mode renderer for Propel: renders templates at request time, reading
 the source from disk so edits show up without a rebuild.
 """
-license = "MIT OR Apache-2.0"
+license = "MIT"
+repository = "https://github.com/lajennylove/Propel"
+homepage = "https://propel.rocketboost.rs"
+keywords = ["templating", "blade", "rocket", "views"]
+categories = ["template-engine"]
 edition = "2021"
 rust-version = "1.75"
-publish = false
 
 [dependencies]
-propel_parser = { path = "../propel_parser" }
+propel_parser = { version = "0.2.0", path = "../propel_parser" }
 serde = "1"
 serde_json = "1"
 
