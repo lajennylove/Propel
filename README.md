@@ -6,18 +6,21 @@ Documentation and a working example: [propel.rocketboost.rs](https://propel.rock
 
 ## Install
 
-Propel is not on crates.io. Add it from git, with the same Rocket revision Propel is built against:
+Add the crates from crates.io. Propel 0.2 uses Rocket 0.5, and `propel_rocket` depends on Rocket 0.5.2 or newer in that series, so Cargo keeps one copy of Rocket:
 
 ```toml
 [dependencies]
-rocket = { git = "https://github.com/rwf2/Rocket", rev = "3a54d079" }
-propel_rocket = { git = "https://github.com/lajennylove/Propel", tag = "v0.2.0" }
-propel_macros = { git = "https://github.com/lajennylove/Propel", tag = "v0.2.0" }
-propel_runtime = { git = "https://github.com/lajennylove/Propel", tag = "v0.2.0" }
+rocket = "0.5.2"
+propel_rocket = "0.2.0"
+propel_runtime = "0.2.0"
+propel_macros = "0.2.0"
+serde = { version = "1", features = ["derive"] }
 
 [build-dependencies]
-propel_compiler = { git = "https://github.com/lajennylove/Propel", tag = "v0.2.0" }
+propel_compiler = "0.2.0"
 ```
+
+`propel_compiler` is a build dependency: `build.rs` uses it to compile the views. `propel_runtime` provides `Assets`, and `propel_macros` provides `#[derive(Truthy)]`. `serde` is needed for the `Serialize` derive on the context structs.
 
 ## Quick start
 
