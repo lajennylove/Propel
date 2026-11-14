@@ -67,7 +67,7 @@ fn posts() -> PropelView {
 }
 ```
 
-In a debug build, `PropelView::render` renders the same views from disk on every request, so an edit shows on refresh. A release build renders only the compiled views.
+`PropelView::render("posts.index", &ctx)` renders the same views from disk, in debug and release builds. It reads `resources/views` and any registered namespace on each request, so an edit or a newly uploaded template shows on the next request. Parsed templates are cached by file modification time and length. Use it for views that exist only at run time, such as CMS themes. A missing view is a `RenderError` (a 500 response), not a panic. Compiled views stay available and are the choice for views known at build time.
 
 ## Features
 
