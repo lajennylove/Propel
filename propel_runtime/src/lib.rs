@@ -34,6 +34,15 @@ pub trait Loader {
     /// Returns the source for a template name such as `posts.index`.
     fn source(&self, name: &str) -> io::Result<String>;
 
+    /// Called before a template that `@extends` or `@include`s `name` is
+    /// loaded. `entry` is the view the render started from. Return an error
+    /// to refuse the reference. The default allows everything;
+    /// `FileLoader` uses it to confine namespaces.
+    fn check_reference(&self, entry: &str, name: &str) -> io::Result<()> {
+        let _ = (entry, name);
+        Ok(())
+    }
+
     /// Returns the parsed template. The default parses the source on every
     /// call. `FileLoader` overrides this with a cache.
     fn template(&self, name: &str) -> Result<Arc<Template>, RenderError> {
@@ -49,6 +58,10 @@ pub trait Loader {
 impl<L: Loader + ?Sized> Loader for std::sync::Arc<L> {
     fn source(&self, name: &str) -> io::Result<String> {
         (**self).source(name)
+    }
+
+    fn check_reference(&self, entry: &str, name: &str) -> io::Result<()> {
+        (**self).check_reference(entry, name)
     }
 
     fn template(&self, name: &str) -> Result<Arc<Template>, RenderError> {
@@ -108,6 +121,10 @@ pub struct FileLoader {
 #[derive(Clone)]
 enum Namespace {
     Path(PathBuf),
+    Confined {
+        root: PathBuf,
+        parent: Option<String>,
+    },
     Loader(Arc<dyn Loader + Send + Sync>),
 }
 
@@ -138,6 +155,24 @@ impl FileLoader {
     pub fn namespace(mut self, name: impl Into<String>, root: impl Into<PathBuf>) -> Self {
         self.namespaces
             .insert(name.into(), Namespace::Path(root.into()));
+        self
+    }
+
+    /// Adds a confined namespace, for templates that are not trusted, such as
+    /// a CMS theme.
+    pub fn confined_namespace(
+        mut self,
+        name: impl Into<String>,
+        root: impl Into<PathBuf>,
+        parent: Option<&str>,
+    ) -> Self {
+        self.namespaces.insert(
+            name.into(),
+            Namespace::Confined {
+                root: root.into(),
+                parent: parent.map(str::to_owned),
+            },
+        );
         self
     }
 
@@ -178,9 +213,28 @@ impl FileLoader {
 
         match namespace {
             Some(Namespace::Loader(loader)) => Ok(Resolved::Loader(loader, view)),
+            Some(Namespace::Confined { root, .. }) => {
+                Ok(Resolved::File(confined_path(root, view)?))
+            }
             Some(Namespace::Path(root)) => Ok(Resolved::File(view_path(root, view))),
             None => Ok(Resolved::File(view_path(&self.root, view))),
         }
+    }
+}
+
+/// The file for `view` under a confined `root`, with symlinks resolved. The
+/// file must exist, and its real path must be inside the real root, so a
+/// symlink (to a file or a directory) cannot lead outside.
+fn confined_path(root: &std::path::Path, view: &str) -> io::Result<PathBuf> {
+    let real_root = std::fs::canonicalize(root)?;
+    let real_path = std::fs::canonicalize(view_path(root, view))?;
+    if real_path.starts_with(&real_root) {
+        Ok(real_path)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("view `{view}` is outside its confined namespace root"),
+        ))
     }
 }
 
@@ -212,6 +266,27 @@ fn invalid_name(name: &str) -> io::Error {
 }
 
 impl Loader for FileLoader {
+    fn check_reference(&self, entry: &str, name: &str) -> io::Result<()> {
+        let Some((entry_ns, _)) = entry.split_once("::") else {
+            return Ok(());
+        };
+        let Some(Namespace::Confined { parent, .. }) = self.namespaces.get(entry_ns) else {
+            return Ok(());
+        };
+        let allowed = match name.split_once("::") {
+            Some((target, _)) => target == entry_ns || Some(target) == parent.as_deref(),
+            None => false,
+        };
+        if allowed {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("`{name}` is outside the confined namespace `{entry_ns}` of `{entry}`"),
+            ))
+        }
+    }
+
     fn source(&self, name: &str) -> io::Result<String> {
         match self.resolve(name)? {
             Resolved::File(path) => std::fs::read_to_string(path),
@@ -363,6 +438,7 @@ where
         context,
         scopes: Vec::new(),
         template: String::new(),
+        entry: name.to_owned(),
         halted: false,
         section_stack: Vec::new(),
         include_depth: 0,
@@ -395,6 +471,9 @@ struct Renderer<'a, L> {
     scopes: Vec<(String, Value)>,
     /// The template being rendered, for error messages.
     template: String,
+    /// The view the render started from. A confined entry decides which
+    /// namespaces every `@extends` and `@include` may reach.
+    entry: String,
     /// Set by `@dd`. Rendering stops at the next node, up to the end of the
     /// section or partial that holds it.
     halted: bool,
@@ -445,6 +524,12 @@ impl<L: Loader> Renderer<'_, L> {
     }
 
     fn parse(&self, name: &str) -> Result<Arc<Template>, RenderError> {
+        self.loader
+            .check_reference(&self.entry, name)
+            .map_err(|source| RenderError::Load {
+                name: name.to_owned(),
+                source,
+            })?;
         self.loader.template(name)
     }
 

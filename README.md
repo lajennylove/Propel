@@ -69,6 +69,17 @@ fn posts() -> PropelView {
 
 `PropelView::render("posts.index", &ctx)` renders the same views from disk, in debug and release builds. It reads `resources/views` and any registered namespace on each request, so an edit or a newly uploaded template shows on the next request. Parsed templates are cached by file modification time and length. Use it for views that exist only at run time, such as CMS themes. A missing view is a `RenderError` (a 500 response), not a panic. Compiled views stay available and are the choice for views known at build time.
 
+### Confining third-party themes
+
+`register_namespace` trusts its templates. For templates you do not trust, such as a CMS theme, use `register_confined_namespace(name, root, parent)` (in `propel_rocket`; `FileLoader::confined_namespace` in `propel_runtime`):
+
+```rust
+register_confined_namespace("theme_parent", "themes/parent", None);
+register_confined_namespace("theme_child", "themes/child", Some("theme_parent"));
+```
+
+A confined theme's `@extends` and `@include` can reach only its own namespace and, if `parent` is given, the parent's. Anything else fails with a `RenderError` and reads nothing outside the roots: `..` segments, absolute paths, another namespace, unqualified names (which would read the app's `resources/views`), and symlinks that resolve outside the root. Paths are canonicalised before the check. The rule follows the view a render starts from, so `PropelView::render("theme_child::page", &ctx)` holds the whole layout and partial chain to `theme_child` and `theme_parent`. Write references in full: `@include('theme_child::partials.nav')`. `{{ }}` still escapes HTML and `{!! !!}` does not, so only give raw output to templates you accept as authors of that HTML.
+
 ## Features
 
 - **Blade-style syntax:** `{{ }}` (escaped) and `{!! !!}` (raw), `@if`, `@foreach`, `@forelse`, `@extends` and `@section`, `@yield`, `@include`, `@push` and `@stack`, `@vite` and `asset()`.

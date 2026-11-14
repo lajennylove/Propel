@@ -33,6 +33,10 @@ const VIEWS_DIR: &str = "resources/views";
 #[derive(Clone)]
 enum Source {
     Path(PathBuf),
+    Confined {
+        root: PathBuf,
+        parent: Option<String>,
+    },
     Loader(Arc<dyn Loader + Send + Sync>),
 }
 
@@ -57,6 +61,35 @@ fn add_namespace(name: String, source: Source) {
 /// `on_ignite`. Registering a name again replaces its root.
 pub fn register_namespace(name: impl Into<String>, root: impl Into<PathBuf>) {
     add_namespace(name.into(), Source::Path(root.into()));
+}
+
+/// Like [`register_namespace`], for templates that are not trusted, such as a
+/// CMS theme uploaded by a third party.
+///
+/// A confined namespace's templates can `@extends` and `@include` only views
+/// of their own namespace, or of the namespace named by `parent` (a child
+/// theme extending its parent theme). Everything else fails with a
+/// `RenderError` and reads nothing: `..` segments, absolute paths, unqualified
+/// names (which would read the app's own `resources/views`), another
+/// namespace, and symlinks that resolve outside the root. The rule follows the
+/// view a render starts from: render `child::page`, and the whole chain of
+/// layouts and partials is held to `child` and its parent. Write references
+/// in full (`@include('child::partials.nav')`).
+///
+/// `{{ }}` escapes HTML and `{!! !!}` does not, as in every namespace, so a
+/// theme author can still write raw HTML. Registering a name again replaces it.
+pub fn register_confined_namespace(
+    name: impl Into<String>,
+    root: impl Into<PathBuf>,
+    parent: Option<&str>,
+) {
+    add_namespace(
+        name.into(),
+        Source::Confined {
+            root: root.into(),
+            parent: parent.map(str::to_owned),
+        },
+    );
 }
 
 /// Makes the views that `loader` serves available as `name::view`. Use it when
@@ -167,6 +200,11 @@ impl PropelView {
                 FileLoader::new(VIEWS_DIR),
                 |loader, (namespace, source)| match source {
                     Source::Path(root) => loader.namespace(namespace.clone(), root.clone()),
+                    Source::Confined { root, parent } => loader.confined_namespace(
+                        namespace.clone(),
+                        root.clone(),
+                        parent.as_deref(),
+                    ),
                     Source::Loader(shared) => {
                         loader.namespace_loader(namespace.clone(), Arc::clone(shared))
                     }
