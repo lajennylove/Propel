@@ -34,13 +34,21 @@ pub trait Loader {
     /// Returns the source for a template name such as `posts.index`.
     fn source(&self, name: &str) -> io::Result<String>;
 
-    /// Called before a template that `@extends` or `@include`s `name` is
-    /// loaded. `entry` is the view the render started from. Return an error
-    /// to refuse the reference. The default allows everything;
-    /// `FileLoader` uses it to confine namespaces.
-    fn check_reference(&self, entry: &str, name: &str) -> io::Result<()> {
-        let _ = (entry, name);
-        Ok(())
+    /// Resolves the name in an `@extends` or `@include` written in the
+    /// template `from`, and returns the name to load. `theme` is the namespace
+    /// of the theme being rendered, as [`Loader::enter_theme`] last returned.
+    /// Return an error to refuse the reference. The default allows every name
+    /// as written; `FileLoader` uses it to confine namespaces.
+    fn resolve_reference(&self, from: &str, theme: Option<&str>, name: &str) -> io::Result<String> {
+        let _ = (from, theme);
+        Ok(name.to_owned())
+    }
+
+    /// The theme being rendered after entering `template`, given the theme
+    /// before. The default never has one.
+    fn enter_theme(&self, theme: Option<&str>, template: &str) -> Option<String> {
+        let _ = (theme, template);
+        None
     }
 
     /// Returns the parsed template. The default parses the source on every
@@ -60,8 +68,12 @@ impl<L: Loader + ?Sized> Loader for std::sync::Arc<L> {
         (**self).source(name)
     }
 
-    fn check_reference(&self, entry: &str, name: &str) -> io::Result<()> {
-        (**self).check_reference(entry, name)
+    fn resolve_reference(&self, from: &str, theme: Option<&str>, name: &str) -> io::Result<String> {
+        (**self).resolve_reference(from, theme, name)
+    }
+
+    fn enter_theme(&self, theme: Option<&str>, template: &str) -> Option<String> {
+        (**self).enter_theme(theme, template)
     }
 
     fn template(&self, name: &str) -> Result<Arc<Template>, RenderError> {
@@ -190,6 +202,31 @@ impl FileLoader {
         self
     }
 
+    /// The declared parent of a confined namespace, if any.
+    fn parent_of(&self, namespace: &str) -> Option<&str> {
+        match self.namespaces.get(namespace) {
+            Some(Namespace::Confined { parent, .. }) => parent.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Checks that a declared `parent` exists and is itself confined.
+    fn confined_parent<'a>(
+        &self,
+        namespace: &str,
+        parent: Option<&'a str>,
+    ) -> io::Result<Option<&'a str>> {
+        match parent {
+            Some(p) if !matches!(self.namespaces.get(p), Some(Namespace::Confined { .. })) => {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("parent `{p}` of confined namespace `{namespace}` is not a confined namespace"),
+                ))
+            }
+            other => Ok(other),
+        }
+    }
+
     fn resolve<'a>(&'a self, name: &'a str) -> io::Result<Resolved<'a>> {
         let (namespace, view) = match name.split_once("::") {
             Some((namespace, view)) => {
@@ -266,24 +303,72 @@ fn invalid_name(name: &str) -> io::Error {
 }
 
 impl Loader for FileLoader {
-    fn check_reference(&self, entry: &str, name: &str) -> io::Result<()> {
-        let Some((entry_ns, _)) = entry.split_once("::") else {
-            return Ok(());
+    fn resolve_reference(&self, from: &str, theme: Option<&str>, name: &str) -> io::Result<String> {
+        let Some((from_ns, _)) = from.split_once("::") else {
+            return Ok(name.to_owned());
         };
-        let Some(Namespace::Confined { parent, .. }) = self.namespaces.get(entry_ns) else {
-            return Ok(());
+        let Some(Namespace::Confined {
+            parent: from_parent,
+            ..
+        }) = self.namespaces.get(from_ns)
+        else {
+            return Ok(name.to_owned());
         };
-        let allowed = match name.split_once("::") {
-            Some((target, _)) => target == entry_ns || Some(target) == parent.as_deref(),
-            None => false,
+        let from_parent = self.confined_parent(from_ns, from_parent.as_deref())?;
+
+        // A qualified name may name only the template's own namespace or its
+        // declared parent.
+        if let Some((target, _)) = name.split_once("::") {
+            return if target == from_ns || Some(target) == from_parent {
+                Ok(name.to_owned())
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("`{name}` is outside the confined namespace `{from_ns}` of `{from}`"),
+                ))
+            };
+        }
+
+        // An unqualified name is theme-relative: the theme being rendered
+        // first, then its parent.
+        if !valid_segments(name) {
+            return Err(invalid_name(name));
+        }
+        let active = match theme {
+            Some(t) if t == from_ns || self.parent_of(t) == Some(from_ns) => t,
+            _ => from_ns,
         };
-        if allowed {
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                format!("`{name}` is outside the confined namespace `{entry_ns}` of `{entry}`"),
-            ))
+        let active_parent = match self.namespaces.get(active) {
+            Some(Namespace::Confined { parent, .. }) => {
+                self.confined_parent(active, parent.as_deref())?
+            }
+            _ => None,
+        };
+        for namespace in std::iter::once(active).chain(active_parent) {
+            let Some(Namespace::Confined { root, .. }) = self.namespaces.get(namespace) else {
+                continue;
+            };
+            match confined_path(root, name) {
+                Ok(_) => return Ok(format!("{namespace}::{name}")),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("view `{name}` not found in theme `{active}` or its parent"),
+        ))
+    }
+
+    fn enter_theme(&self, theme: Option<&str>, template: &str) -> Option<String> {
+        let confined = template
+            .split_once("::")
+            .map(|(ns, _)| ns)
+            .filter(|ns| matches!(self.namespaces.get(*ns), Some(Namespace::Confined { .. })));
+        match (theme, confined) {
+            (Some(t), Some(ns)) if t == ns || self.parent_of(t) == Some(ns) => Some(t.to_owned()),
+            (_, Some(ns)) => Some(ns.to_owned()),
+            (theme, None) => theme.map(str::to_owned),
         }
     }
 
@@ -438,7 +523,7 @@ where
         context,
         scopes: Vec::new(),
         template: String::new(),
-        entry: name.to_owned(),
+        theme: None,
         halted: false,
         section_stack: Vec::new(),
         include_depth: 0,
@@ -471,9 +556,9 @@ struct Renderer<'a, L> {
     scopes: Vec<(String, Value)>,
     /// The template being rendered, for error messages.
     template: String,
-    /// The view the render started from. A confined entry decides which
-    /// namespaces every `@extends` and `@include` may reach.
-    entry: String,
+    /// The theme being rendered: the most-derived confined namespace in the
+    /// current render chain. Unqualified names resolve in it first.
+    theme: Option<String>,
     /// Set by `@dd`. Rendering stops at the next node, up to the end of the
     /// section or partial that holds it.
     halted: bool,
@@ -483,7 +568,7 @@ struct Renderer<'a, L> {
     /// How deep `@include` is nested right now.
     include_depth: usize,
     /// The `@push` and `@prepend` bodies by stack name, in print order.
-    stacks: HashMap<String, Vec<Vec<Node>>>,
+    stacks: HashMap<String, Vec<(String, Vec<Node>)>>,
 }
 
 impl<L: Loader> Renderer<'_, L> {
@@ -504,6 +589,7 @@ impl<L: Loader> Renderer<'_, L> {
         }
 
         self.template = name.to_owned();
+        self.theme = self.loader.enter_theme(self.theme.as_deref(), name);
         let template = self.parse(name)?;
 
         // The derived templates' definitions come first, so they win.
@@ -518,19 +604,42 @@ impl<L: Loader> Renderer<'_, L> {
         });
 
         match parent {
-            Some(parent) => self.page(parent, sections, depth + 1, out),
+            Some(parent) => {
+                let parent = self.reference(parent)?;
+                self.page(&parent, sections, depth + 1, out)
+            }
             None => self.nodes(&template.nodes, &sections, out),
         }
     }
 
     fn parse(&self, name: &str) -> Result<Arc<Template>, RenderError> {
+        self.loader.template(name)
+    }
+
+    /// The name an `@extends` or `@include` written in the current template
+    /// loads, or an error when the template may not reach it.
+    fn reference(&self, name: &str) -> Result<String, RenderError> {
         self.loader
-            .check_reference(&self.entry, name)
+            .resolve_reference(&self.template, self.theme.as_deref(), name)
             .map_err(|source| RenderError::Load {
                 name: name.to_owned(),
                 source,
-            })?;
-        self.loader.template(name)
+            })
+    }
+
+    /// Makes `template` the current template (and updates the theme). Pass
+    /// the result to `leave`.
+    fn enter(&mut self, template: &str) -> (String, Option<String>) {
+        let theme = self.loader.enter_theme(self.theme.as_deref(), template);
+        (
+            std::mem::replace(&mut self.template, template.to_owned()),
+            std::mem::replace(&mut self.theme, theme),
+        )
+    }
+
+    fn leave(&mut self, outer: (String, Option<String>)) {
+        self.template = outer.0;
+        self.theme = outer.1;
     }
 
     fn nodes(
@@ -660,22 +769,26 @@ impl<L: Loader> Renderer<'_, L> {
                         });
                     }
 
-                    let template = self.parse(name)?;
-                    let outer = std::mem::replace(&mut self.template, name.clone());
+                    let resolved = self.reference(name)?;
+                    let template = self.parse(&resolved)?;
+                    let outer = self.enter(&resolved);
                     self.include_depth += 1;
                     let result = self.nodes(&template.nodes, sections, out);
                     // `@dd` stops only the partial it is in.
                     self.halted = false;
                     self.include_depth -= 1;
-                    self.template = outer;
+                    self.leave(outer);
                     result?;
                 }
                 // A push renders in its stack, which is printed by `@stack`.
                 Node::Push { .. } => {}
                 Node::Stack(name) => {
                     let bodies = self.stacks.get(name).cloned().unwrap_or_default();
-                    for body in bodies {
-                        self.nodes(&body, sections, out)?;
+                    for (template, body) in bodies {
+                        let outer = self.enter(&template);
+                        let result = self.nodes(&body, sections, out);
+                        self.leave(outer);
+                        result?;
                     }
                 }
                 Node::Parent => {
@@ -708,6 +821,13 @@ impl<L: Loader> Renderer<'_, L> {
         }
 
         let template = self.parse(name)?;
+        let outer = self.enter(name);
+        let result = self.collect_template(&template, depth);
+        self.leave(outer);
+        result
+    }
+
+    fn collect_template(&mut self, template: &Template, depth: usize) -> Result<(), RenderError> {
         self.collect_pushes(&template.nodes, depth)?;
 
         let parent = template.nodes.iter().find_map(|node| match node {
@@ -715,6 +835,7 @@ impl<L: Loader> Renderer<'_, L> {
             _ => None,
         });
         if let Some(parent) = parent {
+            let parent = self.reference(&parent)?;
             self.collect_stacks(&parent, depth + 1)?;
         }
 
@@ -729,11 +850,12 @@ impl<L: Loader> Renderer<'_, L> {
                     body,
                     prepend,
                 } => {
+                    let entry = (self.template.clone(), body.clone());
                     let stack = self.stacks.entry(name.clone()).or_default();
                     if *prepend {
-                        stack.insert(0, body.clone());
+                        stack.insert(0, entry);
                     } else {
-                        stack.push(body.clone());
+                        stack.push(entry);
                     }
                     self.collect_pushes(body, depth)?;
                 }
@@ -763,8 +885,12 @@ impl<L: Loader> Renderer<'_, L> {
                             template: name.clone(),
                         });
                     }
-                    let template = self.parse(name)?;
-                    self.collect_pushes(&template.nodes, depth + 1)?;
+                    let resolved = self.reference(name)?;
+                    let template = self.parse(&resolved)?;
+                    let outer = self.enter(&resolved);
+                    let result = self.collect_pushes(&template.nodes, depth + 1);
+                    self.leave(outer);
+                    result?;
                 }
                 _ => {}
             }
@@ -786,13 +912,13 @@ impl<L: Loader> Renderer<'_, L> {
             return Ok(());
         };
 
-        let outer = std::mem::replace(&mut self.template, section.template.clone());
+        let outer = self.enter(&section.template);
         self.section_stack.push((name.to_owned(), index));
         let result = self.nodes(&section.nodes, sections, out);
         // `@dd` stops only the section it is in, so the layout still finishes.
         self.halted = false;
         self.section_stack.pop();
-        self.template = outer;
+        self.leave(outer);
         result
     }
 

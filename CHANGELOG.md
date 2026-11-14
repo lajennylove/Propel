@@ -11,12 +11,16 @@
   missing view is a `RenderError`, not a panic.
 - `register_confined_namespace(name, root, parent)` (and
   `FileLoader::confined_namespace`) registers a namespace for untrusted
-  templates such as CMS themes. Its `@extends` and `@include` reach only its
-  own root and its parent's. `..`, absolute paths, unqualified names, other
-  namespaces and symlinks that resolve outside the root fail with a
-  `RenderError`. `register_namespace` is unchanged.
-- `Loader::check_reference`, a defaulted method that lets a loader refuse an
-  `@extends` or `@include`.
+  templates such as CMS themes. Each `@extends`, `@include` and `@push` body is
+  judged by the template that contains it. A qualified name may name only the
+  template's own namespace or its declared parent (which must be confined).
+  An unqualified name is theme-relative: it resolves in the active (most
+  derived) theme, then its parent, so a child theme file overrides the
+  parent's, and it never reads app views. `..`, absolute paths and symlinks
+  that resolve outside the root fail with a `RenderError`.
+  `register_namespace` is unchanged.
+- `Loader::resolve_reference` and `Loader::enter_theme`, defaulted methods that
+  let a loader resolve or refuse an `@extends` or `@include`.
 
 ### Changed
 

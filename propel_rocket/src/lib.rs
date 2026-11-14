@@ -66,15 +66,16 @@ pub fn register_namespace(name: impl Into<String>, root: impl Into<PathBuf>) {
 /// Like [`register_namespace`], for templates that are not trusted, such as a
 /// CMS theme uploaded by a third party.
 ///
-/// A confined namespace's templates can `@extends` and `@include` only views
-/// of their own namespace, or of the namespace named by `parent` (a child
-/// theme extending its parent theme). Everything else fails with a
-/// `RenderError` and reads nothing: `..` segments, absolute paths, unqualified
-/// names (which would read the app's own `resources/views`), another
-/// namespace, and symlinks that resolve outside the root. The rule follows the
-/// view a render starts from: render `child::page`, and the whole chain of
-/// layouts and partials is held to `child` and its parent. Write references
-/// in full (`@include('child::partials.nav')`).
+/// Each `@extends`, `@include` and `@push` body is judged by the template that
+/// contains it, whatever view the render started from. A qualified name may
+/// name only the template's own namespace or `parent` (a child theme extending
+/// its parent theme), which must itself be confined. An unqualified name
+/// (`@include('partials.nav')`) is theme-relative, as in WordPress child
+/// themes: it resolves in the active theme (the most-derived confined
+/// namespace in the render chain) first, then in that theme's parent, so a
+/// child's file overrides the parent's. It never reads the app's own
+/// `resources/views`. `..`, absolute paths, other namespaces and symlinks that
+/// resolve outside the root fail with a `RenderError`.
 ///
 /// `{{ }}` escapes HTML and `{!! !!}` does not, as in every namespace, so a
 /// theme author can still write raw HTML. Registering a name again replaces it.

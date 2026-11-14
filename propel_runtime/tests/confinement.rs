@@ -253,3 +253,188 @@ fn unconfined_namespaces_still_reach_the_app_and_other_namespaces() {
     let result = render(&loader, "pkg::page", &serde_json::json!({}));
     assert_eq!(result.unwrap(), "shared");
 }
+
+#[test]
+fn an_app_view_extending_a_theme_layout_does_not_unconfine_the_theme() {
+    let app = write_views(
+        "app_entry",
+        "app",
+        &[
+            ("secrets", SECRET),
+            ("admin", SECRET),
+            ("pages", "@extends('theme::layout')"),
+        ],
+    );
+    let other = write_views("app_entry", "other", &[("secrets", SECRET)]);
+    let theme = write_views(
+        "app_entry",
+        "theme",
+        &[
+            ("layout", "@include('admin')"),
+            ("layout_other", "@include('other::secrets')"),
+            ("layout_dots", "@include('../../secrets')"),
+            ("layout_extends", "@extends('other::secrets')"),
+        ],
+    );
+    let loader = FileLoader::new(app)
+        .namespace("other", other)
+        .confined_namespace("theme", theme, None);
+    let app_dir = loader_app_dir("app_entry");
+    for layout in ["layout", "layout_other", "layout_dots", "layout_extends"] {
+        fs::write(
+            app_dir.join("pages.propel"),
+            format!("@extends('theme::{layout}')"),
+        )
+        .unwrap();
+        let result = render(&loader, "pages", &serde_json::json!({}));
+        assert!(is_load_error(&result), "{layout}: {result:?}");
+        assert_no_secret(&result);
+    }
+}
+
+fn loader_app_dir(test: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join("confinement")
+        .join(test)
+        .join("app")
+}
+
+#[test]
+fn an_unqualified_name_is_theme_relative() {
+    let theme = write_views(
+        "relative",
+        "theme",
+        &[
+            ("partials/nav", "nav"),
+            ("page", "@include('partials.nav')"),
+        ],
+    );
+    let app = write_views("relative", "app", &[("partials/nav", "APP-NAV")]);
+    let loader = FileLoader::new(app).confined_namespace("theme", theme, None);
+
+    let result = render(&loader, "theme::page", &serde_json::json!({}));
+    assert_eq!(result.unwrap(), "nav");
+}
+
+fn child_parent(test: &str, child_files: &[(&str, &str)]) -> FileLoader {
+    let parent = write_views(
+        test,
+        "parent",
+        &[
+            ("layout", "<main>@include('partials.nav')@yield('c')</main>"),
+            ("partials/nav", "parent-nav"),
+            ("only_parent", "only-parent"),
+        ],
+    );
+    let child = write_views(test, "child", child_files);
+    let app = write_views(test, "app", &[("partials/nav", SECRET)]);
+    FileLoader::new(app)
+        .confined_namespace("parent", parent, None)
+        .confined_namespace("child", child, Some("parent"))
+}
+
+#[test]
+fn a_child_file_overrides_the_parents_for_an_unqualified_include() {
+    let loader = child_parent(
+        "override",
+        &[
+            ("partials/nav", "child-nav"),
+            (
+                "page",
+                "@extends('layouts')@section('c')|@include('only_parent')@endsection",
+            ),
+            ("layouts", "unused"),
+        ],
+    );
+    // Entry extends the parent layout by its qualified name.
+    fs::write(
+        loader_app_dir_for("override", "child").join("page.propel"),
+        "@extends('parent::layout')@section('c')|@include('only_parent')@endsection",
+    )
+    .unwrap();
+
+    let result = render(&loader, "child::page", &serde_json::json!({}));
+    assert_eq!(result.unwrap(), "<main>child-nav|only-parent</main>");
+}
+
+fn loader_app_dir_for(test: &str, dir: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join("confinement")
+        .join(test)
+        .join(dir)
+}
+
+#[test]
+fn the_parents_file_is_used_when_the_child_has_none() {
+    let loader = child_parent(
+        "fallback",
+        &[(
+            "page",
+            "@extends('parent::layout')@section('c')!@endsection",
+        )],
+    );
+
+    let result = render(&loader, "child::page", &serde_json::json!({}));
+    assert_eq!(result.unwrap(), "<main>parent-nav!</main>");
+}
+
+#[test]
+fn an_app_entry_over_a_child_theme_also_resolves_child_first() {
+    let loader = child_parent(
+        "app_child",
+        &[
+            ("partials/nav", "child-nav"),
+            ("layout", "@extends('parent::layout')"),
+        ],
+    );
+    let app = loader_app_dir_for("app_child", "app");
+    fs::write(app.join("pages.propel"), "@extends('child::layout')").unwrap();
+
+    let result = render(&loader, "pages", &serde_json::json!({}));
+    assert_eq!(result.unwrap(), "<main>child-nav</main>");
+}
+
+#[test]
+fn a_parent_that_is_not_confined_or_missing_is_refused() {
+    let plain = write_views("badparent", "plain", &[("layout", "plain")]);
+    let child = write_views(
+        "badparent",
+        "child",
+        &[
+            ("page", "@extends('plain::layout')"),
+            ("page2", "@extends('ghost::layout')"),
+        ],
+    );
+    let app = write_views("badparent", "app", &[]);
+    let loader = FileLoader::new(app)
+        .namespace("plain", plain)
+        .confined_namespace("child", child.clone(), Some("plain"));
+    let result = render(&loader, "child::page", &serde_json::json!({}));
+    assert!(is_load_error(&result), "{result:?}");
+
+    let loader = FileLoader::new(write_views("badparent", "app2", &[])).confined_namespace(
+        "child",
+        child,
+        Some("ghost"),
+    );
+    let result = render(&loader, "child::page2", &serde_json::json!({}));
+    assert!(is_load_error(&result), "{result:?}");
+}
+
+#[test]
+fn a_push_body_is_judged_by_the_template_that_wrote_it() {
+    let app = write_views(
+        "push",
+        "app",
+        &[("secrets", SECRET), ("pages", "@extends('theme::layout')")],
+    );
+    let theme = write_views(
+        "push",
+        "theme",
+        &[("layout", "@push('s')@include('secrets')@endpush@stack('s')")],
+    );
+    let loader = FileLoader::new(app).confined_namespace("theme", theme, None);
+    let result = render(&loader, "pages", &serde_json::json!({}));
+    assert!(is_load_error(&result), "{result:?}");
+    assert_no_secret(&result);
+}

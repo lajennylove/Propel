@@ -78,7 +78,14 @@ register_confined_namespace("theme_parent", "themes/parent", None);
 register_confined_namespace("theme_child", "themes/child", Some("theme_parent"));
 ```
 
-A confined theme's `@extends` and `@include` can reach only its own namespace and, if `parent` is given, the parent's. Anything else fails with a `RenderError` and reads nothing outside the roots: `..` segments, absolute paths, another namespace, unqualified names (which would read the app's `resources/views`), and symlinks that resolve outside the root. Paths are canonicalised before the check. The rule follows the view a render starts from, so `PropelView::render("theme_child::page", &ctx)` holds the whole layout and partial chain to `theme_child` and `theme_parent`. Write references in full: `@include('theme_child::partials.nav')`. `{{ }}` still escapes HTML and `{!! !!}` does not, so only give raw output to templates you accept as authors of that HTML.
+Every `@extends`, `@include` and `@push` body is judged by the template that contains it, whatever view the render started from, so an app view that extends a theme layout does not lift the theme's limits. Inside a confined theme:
+
+- A qualified name may name only the template's own namespace or its declared `parent`. Another namespace is refused.
+- An unqualified name (`@include('partials.nav')`) is theme-relative, as in WordPress child themes. It never reads the app's `resources/views`. It resolves in the active theme first, then in that theme's parent. The active theme is the most-derived confined namespace in the render chain: the first confined template reached, such as the child theme when `child::page` extends `parent::layout`, or when an app view extends `child::layout`. So a parent layout that includes `partials.nav` shows the child's `partials.nav` when the child has one, and the parent's when it does not. Write `parent::partials.nav` to skip the override.
+- `..` segments, absolute paths and symlinks that resolve outside the root are refused (paths are canonicalised before the check).
+- `parent` must itself be a confined namespace. If it is missing or not confined, rendering fails with a `RenderError` (checked at render time, not at registration).
+
+Anything refused fails with a `RenderError` and reads nothing outside the roots. `{{ }}` still escapes HTML and `{!! !!}` does not, so only give raw output to templates you accept as authors of that HTML.
 
 ## Features
 
