@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::io;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::SystemTime;
 
 pub mod assets;
@@ -28,6 +28,76 @@ use serde_json::Value;
 /// How deep `@extends` chains may go before rendering gives up. This stops a
 /// template that extends itself from recursing forever.
 const MAX_LAYOUT_DEPTH: usize = 32;
+
+/// Limits that stop an oversized template or a runaway loop from exhausting
+/// the server. Set them with [`set_limits`]. They apply to every render read
+/// from a [`Loader`], confined or not. Compiled views are app code and are not
+/// limited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// The largest template, in bytes. A larger file is refused before it is
+    /// read. A template of exactly this size is accepted.
+    pub max_template_bytes: u64,
+    /// How many `@foreach` and `@forelse` iterations one `render` call may run
+    /// in all, counting every nested loop, `@include` and layout.
+    pub max_loop_iterations: u64,
+}
+
+impl Default for Limits {
+    /// 1 MiB (1,048,576 bytes) per template, and 100,000 loop iterations per
+    /// render.
+    fn default() -> Self {
+        Limits {
+            max_template_bytes: 1_048_576,
+            max_loop_iterations: 100_000,
+        }
+    }
+}
+
+fn limits_cell() -> &'static RwLock<Limits> {
+    static LIMITS: OnceLock<RwLock<Limits>> = OnceLock::new();
+    LIMITS.get_or_init(|| RwLock::new(Limits::default()))
+}
+
+/// Sets the limits for every later render in this process.
+pub fn set_limits(limits: Limits) {
+    *limits_cell().write().unwrap_or_else(|e| e.into_inner()) = limits;
+}
+
+/// The limits now in force.
+pub fn limits() -> Limits {
+    *limits_cell().read().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The error for a template over the size limit. It is a `RenderError::Load`
+/// with `io::ErrorKind::InvalidData`, because `RenderError` is exhaustive and a
+/// new variant would break matches in other crates.
+fn too_large(len: u64, max: u64) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("template is {len} bytes, over the template size limit of {max} bytes"),
+    )
+}
+
+/// Reads a template file, refusing one over the size limit before reading it.
+/// The read itself is capped too, in case the file grows after it is measured.
+fn read_limited(path: &std::path::Path) -> io::Result<String> {
+    use std::io::Read;
+
+    let max = limits().max_template_bytes;
+    let file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    if len > max {
+        return Err(too_large(len, max));
+    }
+    let mut source = String::new();
+    file.take(max.saturating_add(1))
+        .read_to_string(&mut source)?;
+    if source.len() as u64 > max {
+        return Err(too_large(source.len() as u64, max));
+    }
+    Ok(source)
+}
 
 /// Where template source comes from.
 pub trait Loader {
@@ -58,8 +128,20 @@ pub trait Loader {
             name: name.to_owned(),
             source,
         })?;
+        check_len(name, source.len() as u64)?;
         parse_named(name, &source)
     }
+}
+
+fn check_len(name: &str, len: u64) -> Result<(), RenderError> {
+    let max = limits().max_template_bytes;
+    if len > max {
+        return Err(RenderError::Load {
+            name: name.to_owned(),
+            source: too_large(len, max),
+        });
+    }
+    Ok(())
 }
 
 /// A shared loader is a loader, so one loader can serve several namespaces.
@@ -374,7 +456,7 @@ impl Loader for FileLoader {
 
     fn source(&self, name: &str) -> io::Result<String> {
         match self.resolve(name)? {
-            Resolved::File(path) => std::fs::read_to_string(path),
+            Resolved::File(path) => read_limited(&path),
             Resolved::Loader(loader, view) => loader.source(view),
         }
     }
@@ -391,6 +473,9 @@ impl Loader for FileLoader {
         };
         let meta = std::fs::metadata(&path).map_err(load)?;
         let (modified, len) = (meta.modified().map_err(load)?, meta.len());
+        // Checked before the cache, so lowering the limit also refuses a
+        // template that was cached under the old one.
+        check_len(name, len)?;
 
         // A poisoned lock still holds valid entries, so keep using it.
         let mut cache = cache().lock().unwrap_or_else(|e| e.into_inner());
@@ -400,7 +485,7 @@ impl Loader for FileLoader {
             }
         }
 
-        let source = std::fs::read_to_string(&path).map_err(load)?;
+        let source = read_limited(&path).map_err(load)?;
         let template = parse_named(name, &source)?;
         cache.insert(
             path,
@@ -528,6 +613,8 @@ where
         section_stack: Vec::new(),
         include_depth: 0,
         stacks: HashMap::new(),
+        iterations: 0,
+        max_iterations: limits().max_loop_iterations,
     };
 
     let mut out = String::new();
@@ -569,6 +656,10 @@ struct Renderer<'a, L> {
     include_depth: usize,
     /// The `@push` and `@prepend` bodies by stack name, in print order.
     stacks: HashMap<String, Vec<(String, Vec<Node>)>>,
+    /// Loop iterations run so far in this render, across includes and layouts.
+    iterations: u64,
+    /// The budget for `iterations`, read once when the render starts.
+    max_iterations: u64,
 }
 
 impl<L: Loader> Renderer<'_, L> {
@@ -609,6 +700,21 @@ impl<L: Loader> Renderer<'_, L> {
                 self.page(&parent, sections, depth + 1, out)
             }
             None => self.nodes(&template.nodes, &sections, out),
+        }
+    }
+
+    /// The error for a render past its loop budget. A `RenderError::Load` with
+    /// `io::ErrorKind::TimedOut`, for the reason `too_large` gives.
+    fn budget_exceeded(&self) -> RenderError {
+        RenderError::Load {
+            name: self.template.clone(),
+            source: io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "render stopped after the loop iteration budget of {} was used up",
+                    self.max_iterations
+                ),
+            ),
         }
     }
 
@@ -729,6 +835,10 @@ impl<L: Loader> Renderer<'_, L> {
                     for value in items {
                         if self.halted {
                             break;
+                        }
+                        self.iterations += 1;
+                        if self.iterations > self.max_iterations {
+                            return Err(self.budget_exceeded());
                         }
                         self.scopes.push((item.clone(), value));
                         let result = self.nodes(body, sections, out);

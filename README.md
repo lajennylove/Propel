@@ -87,6 +87,26 @@ Every `@extends`, `@include` and `@push` body is judged by the template that con
 
 Anything refused fails with a `RenderError` and reads nothing outside the roots. `{{ }}` still escapes HTML and `{!! !!}` does not, so only give raw output to templates you accept as authors of that HTML.
 
+### Limits
+
+Rendering from disk is capped, so an oversized template or a runaway loop cannot exhaust the server. The limits apply to every render from disk, confined or not. Compiled views are app code and are not limited.
+
+| Limit | Default | Meaning |
+| --- | --- | --- |
+| `max_template_bytes` | 1 MiB (1,048,576 bytes) | The largest template file. A larger file is refused from its size, before it is read. A file of exactly this size renders. |
+| `max_loop_iterations` | 100,000 | Loop iterations (`@foreach` and `@forelse`) per `render` call, counted across nested loops, `@include` and layouts. |
+
+```rust
+use propel_rocket::{set_limits, Limits};
+
+set_limits(Limits {
+    max_template_bytes: 256 * 1024,
+    max_loop_iterations: 20_000,
+});
+```
+
+`set_limits` sets the limits for the whole process, so call it once at startup. Each limit is a `RenderError::Load` whose message names the limit and its value: a template over the size limit has `io::ErrorKind::InvalidData`, and a render past the budget has `io::ErrorKind::TimedOut`. (`RenderError` is exhaustive in 0.2, so these reuse `Load` instead of adding variants.)
+
 ## Features
 
 - **Blade-style syntax:** `{{ }}` (escaped) and `{!! !!}` (raw), `@if`, `@foreach`, `@forelse`, `@extends` and `@section`, `@yield`, `@include`, `@push` and `@stack`, `@vite` and `asset()`.

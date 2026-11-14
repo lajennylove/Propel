@@ -21,6 +21,14 @@
   `register_namespace` is unchanged.
 - `Loader::resolve_reference` and `Loader::enter_theme`, defaulted methods that
   let a loader resolve or refuse an `@extends` or `@include`.
+- `Limits` and `set_limits` (also exported from `propel_rocket`) cap what a
+  render may use. `max_template_bytes` (default 1 MiB) refuses a larger
+  template file from its size, before reading it. `max_loop_iterations`
+  (default 100,000) stops a render that runs more `@foreach` or `@forelse`
+  iterations in total, across nested loops, includes and layouts. Both are a
+  `RenderError::Load` whose message names the limit and its value
+  (`io::ErrorKind::InvalidData` for size, `TimedOut` for the budget), because
+  `RenderError` is exhaustive. Compiled views are not limited.
 
 ### Changed
 

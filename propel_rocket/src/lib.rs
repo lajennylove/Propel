@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use propel_runtime::{render_with_assets, AssetSource, Assets, FileLoader, Loader, RenderError};
+pub use propel_runtime::{set_limits, Limits};
 use rocket::http::{ContentType, Status};
 use rocket::request::Request;
 use rocket::response::{self, Responder, Response};
