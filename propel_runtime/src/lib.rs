@@ -1033,6 +1033,21 @@ impl<L: Loader> Renderer<'_, L> {
             return Ok(());
         };
 
+        // Every section body rendered spends from the budget, so a loop-free
+        // fan-out of `@yield`s is stopped. The depth cap stops a section that
+        // yields itself, directly or through others, before the stack overflows.
+        self.spend()?;
+        if self.section_stack.len() >= MAX_LAYOUT_DEPTH {
+            return Err(RenderError::Load {
+                name: self.template.clone(),
+                source: io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "section `{name}` nests deeper than {MAX_LAYOUT_DEPTH} levels, which means it yields itself"
+                    ),
+                ),
+            });
+        }
         let outer = self.enter(&section.template);
         self.section_stack.push((name.to_owned(), index));
         let result = self.nodes(&section.nodes, sections, out);

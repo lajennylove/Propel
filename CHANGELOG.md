@@ -27,7 +27,10 @@
   (default 100,000) is the render budget: it stops a render that runs more
   `@foreach` or `@forelse` iterations plus template entries (`@include`,
   `@extends` layouts) in total, across nested loops, includes and layouts, so
-  a loop-free include fan-out is stopped too. Both are a
+  a loop-free include fan-out is stopped too. Each rendered section body also
+  counts, and a section that yields itself fails at 32 levels. Includes count
+  in both the stack walk and the render walk, so the effective include
+  allowance is about half the budget. Both are a
   `RenderError::Load` whose message names the limit and its value
   (`io::ErrorKind::InvalidData` for size, `TimedOut` for the budget), because
   `RenderError` is exhaustive. Compiled views are not limited.

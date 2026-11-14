@@ -94,7 +94,7 @@ Rendering from disk is capped, so an oversized template or a runaway loop cannot
 | Limit | Default | Meaning |
 | --- | --- | --- |
 | `max_template_bytes` | 1 MiB (1,048,576 bytes) | The largest template file. A larger file is refused from its size, before it is read. A file of exactly this size renders. |
-| `max_loop_iterations` | 100,000 | The render budget: loop iterations (`@foreach` and `@forelse`) plus template entries (each `@include`, and each layout or `@extends` entered) per `render` call, counted together across nested loops, includes and layouts. The name is kept from 0.2. |
+| `max_loop_iterations` | 100,000 | The render budget: loop iterations (`@foreach` and `@forelse`) plus template entries (each `@include`, and each layout or `@extends` entered) per `render` call, counted together across nested loops, includes and layouts. Each rendered `@section` body (shown by `@yield`, `@show` or `@parent`) counts as an entry too. Includes are counted in both the stack walk and the render walk, so the effective include allowance is about half the budget. A section that yields itself fails once it nests 32 levels deep. The name is kept from 0.2. |
 
 ```rust
 use propel_rocket::{set_limits, Limits};

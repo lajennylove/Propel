@@ -253,8 +253,55 @@ fn an_ordinary_page_with_a_few_includes_is_far_under_the_default() {
         ],
     );
     set_limits(Limits {
-        max_loop_iterations: 10,
+        max_loop_iterations: 20,
         ..Limits::default()
     });
     assert!(render(&loader, "page", &json!({})).is_ok());
+}
+
+#[test]
+fn loop_free_yield_fan_out_stops_quickly() {
+    let _g = guard();
+    // Each section yields the next twice: 2^20 renders without a budget.
+    let mut page = String::from("@extends('layout')");
+    for i in 0..20 {
+        page.push_str(&format!(
+            "@section('a{i}')@yield('a{}')@yield('a{}')@endsection",
+            i + 1,
+            i + 1
+        ));
+    }
+    page.push_str("@section('a20')x@endsection");
+    let loader = views(
+        "yield_fan_out",
+        &[("layout", "@yield('a0')".into()), ("page", page)],
+    );
+    let started = std::time::Instant::now();
+    match render(&loader, "page", &json!({})) {
+        Err(RenderError::Load { source, .. }) => {
+            assert_eq!(source.kind(), io::ErrorKind::TimedOut);
+            assert!(source.to_string().contains("render budget"), "{source}");
+        }
+        other => panic!("expected a budget error, got {other:?}"),
+    }
+    assert!(started.elapsed().as_secs() < 5);
+}
+
+#[test]
+fn a_self_yielding_section_is_an_error_not_a_stack_overflow() {
+    let _g = guard();
+    let loader = views(
+        "self_yield",
+        &[
+            ("layout", "@yield('a')".into()),
+            (
+                "page",
+                "@extends('layout')@section('a')@yield('a')@endsection".into(),
+            ),
+        ],
+    );
+    match render(&loader, "page", &json!({})) {
+        Err(_) => {}
+        Ok(html) => panic!("expected an error, got {html:?}"),
+    }
 }
