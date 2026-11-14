@@ -95,13 +95,14 @@ fn loop_past_the_budget_stops() {
         "budget",
         &[("page", "@foreach (i in items){{ i }}@endforeach".into())],
     );
-    assert!(render(&loader, "page", &items(100_000)).is_ok());
-    match render(&loader, "page", &items(100_001)) {
+    // The page itself costs 2 entries (one to collect stacks, one to render).
+    assert!(render(&loader, "page", &items(99_998)).is_ok());
+    match render(&loader, "page", &items(99_999)) {
         Err(RenderError::Load { source, .. }) => {
             assert_eq!(source.kind(), io::ErrorKind::TimedOut);
             let message = source.to_string();
             assert!(message.contains("100000"), "{message}");
-            assert!(message.contains("iteration budget"), "{message}");
+            assert!(message.contains("render budget"), "{message}");
         }
         other => panic!("expected a budget error, got {other:?}"),
     }
@@ -130,7 +131,7 @@ fn nested_loops_count_every_iteration() {
 fn loops_across_an_include_share_one_budget() {
     let _g = guard();
     set_limits(Limits {
-        max_loop_iterations: 15,
+        max_loop_iterations: 18,
         ..Limits::default()
     });
     let loader = views(
@@ -143,7 +144,8 @@ fn loops_across_an_include_share_one_budget() {
             ),
         ],
     );
-    // 3 + 3*3 = 12 fits. 4 + 4*4 = 20 does not, though each loop is under 15.
+    // 3 + 3*3 = 12 loop iterations, 3 include entries, and 3 more entries (the
+    // page twice and the include walked once for stacks): exactly 18. 4 + 4*4 = 20 does not, though each loop is under 18.
     assert!(render(&loader, "page", &items(3)).is_ok());
     assert!(render(&loader, "page", &items(4)).is_err());
 }
@@ -152,7 +154,7 @@ fn loops_across_an_include_share_one_budget() {
 fn the_budget_is_per_render() {
     let _g = guard();
     set_limits(Limits {
-        max_loop_iterations: 10,
+        max_loop_iterations: 12,
         ..Limits::default()
     });
     let loader = views(
@@ -203,4 +205,56 @@ fn limits_apply_to_confined_namespaces() {
         render(&loader, "theme::page", &json!({})),
         Err(RenderError::Load { .. })
     ));
+}
+
+#[test]
+fn loop_free_include_fan_out_stops_quickly() {
+    let _g = guard();
+    // Each level includes the next one twice: 2^20 entries without a budget.
+    let mut files: Vec<(String, String)> = (0..20)
+        .map(|i| {
+            (
+                format!("p{i}"),
+                format!("@include('p{}')@include('p{}')", i + 1, i + 1),
+            )
+        })
+        .collect();
+    files.push(("p20".into(), "x".into()));
+    files.push(("page".into(), "@include('p0')".into()));
+    let files: Vec<(&str, String)> = files.iter().map(|(n, s)| (n.as_str(), s.clone())).collect();
+    let loader = views("fan_out", &files);
+    let started = std::time::Instant::now();
+    match render(&loader, "page", &json!({})) {
+        Err(RenderError::Load { source, .. }) => {
+            assert_eq!(source.kind(), io::ErrorKind::TimedOut);
+            assert!(source.to_string().contains("render budget"), "{source}");
+        }
+        other => panic!("expected a budget error, got {other:?}"),
+    }
+    assert!(started.elapsed().as_secs() < 5);
+}
+
+#[test]
+fn an_ordinary_page_with_a_few_includes_is_far_under_the_default() {
+    let _g = guard();
+    let loader = views(
+        "ordinary",
+        &[
+            (
+                "layout",
+                "@include('nav')@yield('body')@include('foot')".into(),
+            ),
+            ("nav", "nav".into()),
+            ("foot", "foot".into()),
+            (
+                "page",
+                "@extends('layout')@section('body')@include('nav')body@endsection".into(),
+            ),
+        ],
+    );
+    set_limits(Limits {
+        max_loop_iterations: 10,
+        ..Limits::default()
+    });
+    assert!(render(&loader, "page", &json!({})).is_ok());
 }

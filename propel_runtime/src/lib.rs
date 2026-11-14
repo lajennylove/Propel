@@ -38,8 +38,10 @@ pub struct Limits {
     /// The largest template, in bytes. A larger file is refused before it is
     /// read. A template of exactly this size is accepted.
     pub max_template_bytes: u64,
-    /// How many `@foreach` and `@forelse` iterations one `render` call may run
-    /// in all, counting every nested loop, `@include` and layout.
+    /// The render budget: loop iterations plus template entries (each
+    /// `@include` and each layout or `@extends` entered) that one `render` call
+    /// may use in all, counting nested loops, includes and layouts. The name
+    /// is kept from 0.2 for compatibility.
     pub max_loop_iterations: u64,
 }
 
@@ -679,6 +681,7 @@ impl<L: Loader> Renderer<'_, L> {
             });
         }
 
+        self.spend()?;
         self.template = name.to_owned();
         self.theme = self.loader.enter_theme(self.theme.as_deref(), name);
         let template = self.parse(name)?;
@@ -705,13 +708,21 @@ impl<L: Loader> Renderer<'_, L> {
 
     /// The error for a render past its loop budget. A `RenderError::Load` with
     /// `io::ErrorKind::TimedOut`, for the reason `too_large` gives.
+    fn spend(&mut self) -> Result<(), RenderError> {
+        self.iterations += 1;
+        if self.iterations > self.max_iterations {
+            return Err(self.budget_exceeded());
+        }
+        Ok(())
+    }
+
     fn budget_exceeded(&self) -> RenderError {
         RenderError::Load {
             name: self.template.clone(),
             source: io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!(
-                    "render stopped after the loop iteration budget of {} was used up",
+                    "render stopped after the render budget of {} (loop iterations plus template entries) was used up",
                     self.max_iterations
                 ),
             ),
@@ -836,10 +847,7 @@ impl<L: Loader> Renderer<'_, L> {
                         if self.halted {
                             break;
                         }
-                        self.iterations += 1;
-                        if self.iterations > self.max_iterations {
-                            return Err(self.budget_exceeded());
-                        }
+                        self.spend()?;
                         self.scopes.push((item.clone(), value));
                         let result = self.nodes(body, sections, out);
                         self.scopes.pop();
@@ -879,6 +887,7 @@ impl<L: Loader> Renderer<'_, L> {
                         });
                     }
 
+                    self.spend()?;
                     let resolved = self.reference(name)?;
                     let template = self.parse(&resolved)?;
                     let outer = self.enter(&resolved);
@@ -930,6 +939,7 @@ impl<L: Loader> Renderer<'_, L> {
             });
         }
 
+        self.spend()?;
         let template = self.parse(name)?;
         let outer = self.enter(name);
         let result = self.collect_template(&template, depth);
@@ -995,6 +1005,7 @@ impl<L: Loader> Renderer<'_, L> {
                             template: name.clone(),
                         });
                     }
+                    self.spend()?;
                     let resolved = self.reference(name)?;
                     let template = self.parse(&resolved)?;
                     let outer = self.enter(&resolved);
