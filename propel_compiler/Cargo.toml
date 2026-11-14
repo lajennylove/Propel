@@ -1,6 +1,6 @@
 [package]
 name = "propel_compiler"
-version = "0.2.0"
+version = "0.3.0"
 description = """
 Code generation for Propel: turns a parsed template into Rust.
 """
@@ -13,8 +13,8 @@ edition = "2021"
 rust-version = "1.78"
 
 [dependencies]
-propel_parser = { version = "0.2.0", path = "../propel_parser" }
-propel_runtime = { version = "0.2.0", path = "../propel_runtime" }
+propel_parser = { version = "0.3.0", path = "../propel_parser" }
+propel_runtime = { version = "0.3.0", path = "../propel_runtime" }
 
 [lints]
 workspace = true

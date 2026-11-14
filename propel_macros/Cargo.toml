@@ -1,6 +1,6 @@
 [package]
 name = "propel_macros"
-version = "0.2.0"
+version = "0.3.0"
 description = """
 Proc macros for Propel: check a context against the templates that use it,
 and compile views from a directory.
@@ -17,7 +17,7 @@ rust-version = "1.78"
 proc-macro = true
 
 [dependencies]
-propel_compiler = { version = "0.2.0", path = "../propel_compiler" }
+propel_compiler = { version = "0.3.0", path = "../propel_compiler" }
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }

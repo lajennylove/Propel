@@ -1,6 +1,6 @@
 [package]
 name = "propel_parser"
-version = "0.2.0"
+version = "0.3.0"
 description = """
 Lexer, parser, and AST for the Propel templating language.
 """

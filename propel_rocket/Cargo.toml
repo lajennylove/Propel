@@ -1,6 +1,6 @@
 [package]
 name = "propel_rocket"
-version = "0.2.0"
+version = "0.3.0"
 description = """
 Rocket integration for Propel: the PropelView responder.
 """
@@ -14,7 +14,7 @@ rust-version = "1.75"
 
 [dependencies]
 rocket = "0.5.2"
-propel_runtime = { version = "0.2.0", path = "../propel_runtime" }
+propel_runtime = { version = "0.3.0", path = "../propel_runtime" }
 serde = "1"
 
 [lints]
